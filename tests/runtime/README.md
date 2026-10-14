@@ -16,7 +16,7 @@ bash tests/runtime/verify.sh "$HOST_PID_NAMESPACE" "$HOST_USER_NAMESPACE"
 python3 tests/runtime/stress-proc.py
 ```
 
-The unchanged bwrap command and existing policy checks remain. The runner also builds `thread-proc.c` and runs read-write/read-only cases. It asserts TID != TGID and different leader/requester Mount namespaces. The syscall takes the actual Sysbox listener and production helper path; there is no synthetic listener or test helper in this probe. A separate observer in the requester's namespace checks sandbox PID identity, every captured outer proc submount's identity/read-only policy, masks and detach locks. The leader's target must remain unchanged. Dependencies must already be installed; no host provisioning is performed.
+The unchanged bwrap command and existing policy checks remain. The runner also builds `thread-proc.c` and runs read-write/read-only cases. It asserts TID != TGID and different leader/requester Mount namespaces. The syscall takes the actual Sysbox listener and production helper path; there is no synthetic listener or test helper in this probe. A separate observer in the requester's namespace checks sandbox PID identity, every captured outer proc submount's identity/read-only policy, masks and detach locks. The leader's target must remain unchanged. The read-write case requires a writable outer `/proc` root; registered read-only submount protections remain enabled. The probe fails if read-only inheritance prevents a read-write root rather than clearing that policy. Dependencies must already be installed; no host provisioning is performed.
 
 ### Deterministic checkpoints
 
@@ -44,7 +44,7 @@ Run this complete matrix (32 invocations), one fresh sandbox per case:
 | leader | launch, staging, transfer, commit | interrupt, thread-exit, process-exit, exec |
 | nonleader | launch, staging, transfer, commit | interrupt, thread-exit, process-exit, exec |
 
-`launch` invalidates after descriptor pinning and asserts no helper exists and no mutation. `staging` pauses before the first helper poll; `transfer` pauses before the final poll; `commit` pauses after the final successful poll. The signal-interrupted thread stays alive. Thread-only exit follows interruption and leaves another thread alive. Nonleader exit makes its thread pidfd readable; premature leader exit remains unreadable while the group survives, as verified by the local kernel test. A process-exit kills only the harness's pinned actor; an independent observer survives in its Mount namespace. Exec replaces the requester from another thread: nonleader pidfd becomes readable, leader pidfd remains live. A persistent sandbox supervisor keeps PID 1 alive in all cases.
+`launch` verifies the harness pinning order and kernel invalidation after pinning; it creates no helper and checks no mutation. It does not call the production Go launch gate. The real-notification Go test separately checks that `runProcTransfer` does not invoke its launch callback for an invalid original ID. `staging` pauses before the first helper poll; `transfer` pauses before the final poll; `commit` pauses after the final successful poll. The signal-interrupted thread stays alive. Thread-only exit follows interruption and leaves another thread alive. Nonleader exit makes its thread pidfd readable; premature leader exit remains unreadable while the group survives, as verified by the local kernel test. A process-exit kills only the harness's pinned actor; an independent observer survives in its Mount namespace. Exec replaces the requester from another thread: nonleader pidfd becomes readable, leader pidfd remains live. A persistent sandbox supervisor keeps PID 1 alive in all cases.
 
 At staging/transfer, detected exit must return ESRCH with unchanged target. Interrupt, leader thread-exit and leader exec at these stages must commit the protected tree while the original notification rejects a success response with ENOENT. At commit, all actions force a commit race; the surviving observer must confirm intended PID identity, all registered submount identities, masks, recursive read-only attributes and detach locks. The original invalid notification must reject success. Missing checkpoints, ioctl/namespace errors, observer failures and cleanup timeouts fail the test; there is no skip-to-pass fallback. Helpers must be reaped within 30 seconds after launch (25 second daemon limit plus 5 second observation allowance); the local unit suite separately tests the 20 second alarm and parent-death child cleanup. The harness closes its owned descriptors and kills only pinned, uniquely tagged actors/supervisor/observer.
 
@@ -68,6 +68,8 @@ TID と TGID の違い、leader と要求元の Mount namespace の違いを確�
 syscall は実際の Sysbox listener と production helper を通り、この検査に合成 listener や検査専用 helper は使いません。
 要求元と同じ namespace の別 process が、sandbox PID identity、取得した外側 proc submount すべての identity と read-only policy、mask、detach lock を確認します。
 leader の target は不変であることを要求します。
+read-write ケースには書き込み可能な外側 `/proc` root が必要で、登録済み submount の read-only 保護は維持します。
+read-only の継承で root が書き込み不能になる場合は、その policy を解除せず検査を失敗させます。
 依存物は事前に導入し、ホストの構築は行いません。
 
 ### 決定的な確認地点
@@ -112,7 +114,8 @@ Go の検査は、実際の通知を使って production の起動前関数を�
 | leader | launch、staging、transfer、commit | interrupt、thread-exit、process-exit、exec |
 | 非 leader | launch、staging、transfer、commit | interrupt、thread-exit、process-exit、exec |
 
-`launch` は FD 固定後に通知を失効させ、helper の未起動と target 不変を要求します。
+`launch` は検査プログラムの FD 固定順序と固定後の kernel の通知失効を確認し、helper 未起動と target 不変を要求します。
+この分岐は production の Go 関数を呼ばず、実通知を使う Go 検査が、失効した元の ID で `runProcTransfer` が起動 callback を呼ばないことを別途確認します。
 `staging` は最初の poll 前、`transfer` は最後の poll 前、`commit` は最後の poll 成功後に停止します。
 signal で通知を中断した thread は生存します。
 thread-exit は通知の中断後に thread だけを終了し、別 thread を残します。

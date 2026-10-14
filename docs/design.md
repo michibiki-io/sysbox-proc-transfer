@@ -24,7 +24,7 @@ The protocol is unchanged: no seccomp listener is passed to the helper. Checkpoi
 
 | Checkpoint | Actor and condition | Detected failure |
 |---|---|---|
-| Pre-launch, after all requester/protection FDs are pinned | Daemon: original notification ID valid | No child launch; failure response (EIO at this boundary), no target mutation; deferred FD closes |
+| Pre-launch, after all requester/protection FDs are pinned | Daemon: original notification ID valid | No child launch or target mutation; an internal EIO response is discarded by invalid-ID revalidation rather than delivered to the requester; deferred FD closes |
 | Pre-staging, after target/type/namespace validation and before mapped-user entry | Helper: FD 10 poll shows no thread exit | ESRCH (EBADF for invalid FD); exit destroys owned descriptors, no target mutation |
 | Pre-transfer, after locker reaping/staging discard and target Mount namespace entry | Helper: final FD 10 poll shows no thread exit | Same failure and cleanup, no target mutation |
 | Before response | Upstream daemon: original ID still valid, then kernel notification send | Invalid ID suppresses success; send also rejects a raced invalid ID |
@@ -37,7 +37,7 @@ Helper alarms expire 20 seconds after the most recent `guard()`; the daemon caps
 
 `tests/unit/helper-checkpoint.c` builds a **test-only** helper translation unit that pauses before the first poll (S), before the final poll (T), and after the final successful poll (C). It calls the production helper's real namespace, mount, protection and liveness operations. Its private socket is supplied by the trusted harness, never by production arguments/environment. It is excluded from the production build/export. Do not install it as the daemon helper. `tests/runtime/checkpoints.py` uses its own disposable sandbox, real seccomp listener and thread pidfd; it checks an independent surviving observer in the target Mount namespace. This is direct-helper coverage, separate from `thread-proc.c`'s actual Sysbox path and the Go pre-launch production function test.
 
-For each requester kind (leader/nonleader), run each checkpoint (launch/staging/transfer/commit) with interrupt, thread-exit, process-exit and exec. At launch every invalidated request must leave the target unchanged and create no helper. At S/T a detected thread/process exit, including nonleader thread-exit/exec, must fail with ESRCH and leave the target unchanged. At S/T an interrupt, premature leader exit or leader-replacing exec leaves the pidfd unreadable: the tree must commit with all protections and an invalid original ID must reject success. At C all actions force the accepted race: the observer must verify a committed protected tree and success to the invalid ID must be rejected. No timing-based probabilistic outcome counts as a pass.
+For each requester kind (leader/nonleader), run each checkpoint (launch/staging/transfer/commit) with interrupt, thread-exit, process-exit and exec. At launch the harness verifies pinning order and kernel invalidation, leaves the target unchanged and creates no helper. This branch does not invoke the production Go gate; the real-notification Go test separately verifies that `runProcTransfer` suppresses its launch callback for an invalid original ID. At S/T a detected thread/process exit, including nonleader thread-exit/exec, must fail with ESRCH and leave the target unchanged. At S/T an interrupt, premature leader exit or leader-replacing exec leaves the pidfd unreadable: the tree must commit with all protections and an invalid original ID must reject success. At C all actions force the accepted race: the observer must verify a committed protected tree and success to the invalid ID must be rejected. No timing-based probabilistic outcome counts as a pass.
 
 ### Internal contract
 
@@ -96,7 +96,7 @@ helper に seccomp listener は渡しません。
 
 | 確認地点 | 実行主体と条件 | 検出した失敗の結果 |
 |---|---|---|
-| 起動前、要求元と保護 source の全 FD 固定後 | daemon：元の通知 ID の有効性 | child を起動せず EIO で失敗。target は変更せず、defer で FD を閉じる |
+| 起動前、要求元と保護 source の全 FD 固定後 | daemon：元の通知 ID の有効性 | child と target の変更はなし。内部 EIO 応答は失効 ID の再確認で破棄し、要求元へ送信しない。defer で FD を閉じる |
 | staging 前、target と namespace の検査後、mapped User namespace に入る前 | helper：FD 10 の poll で thread が終了していないこと | ESRCH。不正な FD は EBADF。終了時に所有 FD を閉じ、target は変更しない |
 | 転送前、locker 回収と staging 破棄後、target Mount namespace に入った後 | helper：最後の FD 10 の poll で thread が終了していないこと | 同じ失敗と後始末。target は変更しない |
 | 応答前 | upstream daemon：元の ID の有効性と、その後の kernel への通知送信 | 失効した ID への成功を抑止。送信との競合でも kernel が拒否 |
@@ -135,7 +135,9 @@ production の build と export から除外しており、daemon の helper と
 `thread-proc.c` の実際の Sysbox 経路や、Go による production の起動前関数の検査とは区別します。
 
 leader と非 leader のそれぞれについて、起動前、staging 前、転送前、commit 直前を、interrupt、thread-exit、process-exit、exec で検査します。
-起動前は失効した全要求で helper が未起動かつ target が不変であることを要求します。
+起動前のケースは検査プログラムの FD 固定順序と kernel の通知失効を確認し、helper 未起動と target 不変を要求します。
+この分岐では production の Go 関数を呼びません。
+実通知を使う Go 検査が、失効した元の ID で `runProcTransfer` が起動 callback を呼ばないことを別途確認します。
 S/T で終了を検出した場合（非 leader の exec を含む）は ESRCH と target 不変を要求します。
 S/T の interrupt、leader の先行終了、leader を置き換える exec は pidfd が読み取り不能のままのため、全保護を保持した commit と、失効した元の ID への成功の拒否を要求します。
 C は全操作で競合を強制し、別 process による保護済み tree の確認と、失効 ID への成功の拒否を要求します。

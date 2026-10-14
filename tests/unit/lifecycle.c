@@ -156,6 +156,8 @@ static void run(int leader, int action) {
     if (action == 1) {
         check(kill(child, SIGKILL) == 0, "whole process exit");
         check(readable(thread, 2000) && readable(process, 2000), "whole process pidfds");
+        check(ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &n.id) < 0 && errno == ENOENT,
+              "whole process exit invalidates original notification");
     }
     if (action == 2) {
         byte(pair[0], 'E');

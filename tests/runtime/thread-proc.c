@@ -71,6 +71,8 @@ static void verify(void) {
          "root security attributes");
     if (flags & MS_RDONLY)
         need(root.f_flag & ST_RDONLY, "readonly root");
+    else
+        need(!(root.f_flag & ST_RDONLY), "readwrite root");
     for (int i = 0; i < count; i++) {
         struct protection *q = &policy[i];
         snprintf(p, sizeof(p), "%s/%.1023s", target, q->path);
