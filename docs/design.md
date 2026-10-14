@@ -5,6 +5,8 @@
 - [English](#english): [Transfer](#transfer), [Internal contract](#internal-contract)
 - [日本語](#日本語): [転送](#転送), [内部契約](#内部契約)
 
+- [Sysfs transfer and FUSE backing](#sysfs-transfer-and-fuse-backing) / [sysfs 転送と FUSE backing](#sysfs-転送と-FUSE-backing)
+
 ## English
 
 ### Transfer
@@ -56,6 +58,18 @@ The helper is a trusted internal synchronous interface, not a general mount serv
 | 11 onward | Registered protected source mounts, matching path arguments |
 
 The helper checks namespace types, direct-child User namespace relationship, Mount/PID ownership, trusted parent-user launcher, directory type and requester liveness. Only trusted proc metadata is opened before mapped-user entry; its private FD is closed before entering the requester Mount namespace. Exit status conveys an errno when possible; the daemon returns failure rather than reporting a successful transfer. Build and distribute the patched daemon and helper together; this FD/argument contract is not a versioned public API.
+
+### Sysfs transfer and FUSE backing
+
+`patches/sysfs-transfer.patch` applies after the proc patch to the same pinned trees. New mounts in the registered outer User namespace retain upstream dispatch. Enabled nested requests require a direct child User namespace owning the requester Mount namespace; Network must be owned by outer or child User. The C helper verifies each relationship through nsfs FDs before mapped entry, and enters only outer User/Mount and actual requester Network. All sysfs and scratch mounts execute in mapped outer authority.
+
+The separate sysfs protocol uses FD3 outer User, FD4 outer Mount, FD5 requester User, FD6 requester Mount, **FD7 requester Network**, FD8 target, FD9 outer root, FD10 actual TID `PIDFD_THREAD`, and FD11+ sources. Arguments are mapped UID, GID, flags and relative protection paths. Proc FD7 remains PID. Acquisition anchors requester and outer `/proc` task directories, opens `PIDFD_THREAD` before reading requester namespaces/root, and uses rooted `openat2` for container paths. The existing trusted pre-exec creation-time update snapshots every `/sys` mount, including OCI masks/RO and nested submounts. It orders parents before children, verifies source mount IDs, pinned source device/inode identities in the C worker, and monotonic RO/nosuid/nodev/noexec floors. Missing required sources fail, with their errno. Recursive source clones retain nested mounts. Fresh transfer/backing requires a registered `sysfs` filesystem root with mountinfo Root `/`; whole-root masks and restricted subtree binds fail with ENOTSUP before target mutation. More than 128 sources fails closed.
+
+A bounded private tmpfs in an outer-derived private Mount namespace holds fresh sysfs constructed in the actual Network namespace. Protected sources are attached with identity/floor verification. Requested or inherited root RO is recursive. Child User/Mount separation locks the completed tree before the mapped outer worker transfers it to the pinned target. The same post-pinning production notification gate used by proc runs inside the reaper guard immediately before launch. There is no fallback. Thread poll and notification validation are separate from commit; the proc checkpoint table and residual race boundaries also apply here. A race-committed tree remains protected.
+
+For FUSE virtual-net operations the same helper has a separate backing mode: after UID/GID/flags, `--lookup=devices/virtual/net/...` or `--open=devices/virtual/net/...` precedes source paths; FD8 is an internal socket. It also accepts registered-outer callers in outer or direct-child-owned Network namespaces, verifying the owner parent for the latter; initial-host or deeper owners are rejected. Before the final creation-time update, trusted runtime bootstrap reads retain upstream handling. The fresh backing view starts from registered outer Mount, omits only the registered virtual-parent FUSE emulation mount to prevent recursion, and retains all other masks/RO sources. After mounting read-only it drops to caller mapped UID/GID, clears capabilities and opens a single resource using `RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS`. Final symlinks are inspected via O_PATH; traversal of raw symlink targets is refused. Only that resource FD returns through SCM_RIGHTS. No tree FD, write FD, caller-root mkdir or visible temporary directory is exposed. Each operation pins Network and thread lifetime anew, with no userspace cache. A separate metadata-only exception serves host UID/GID0 requests from this daemon’s own pinned threads/direct inode worker and mapped construction helpers before capability clearing, only for registered protection mount boundaries and their ancestors. An atomically published immutable snapshot avoids reentering the container lock held by upstream inode collection. These synthetic attributes allow trusted source FD traversal; they expose no resource contents, enumeration, symlink target or writable FD and perform no mounts. The native source mount ID and helper FD identity remain mandatory. An OCI readonly self-bind of this same network FUSE passthrough is a special backing case: cloning it would recursively invoke the same handler. Its registered source FD, mount ID and readonly floor are still required; `@ro:` marks only that verified self-alias for raw per-request backing with equivalent readonly/nosuid/nodev/noexec attributes. Transfer mode keeps the original alias mount and identity. Other network FUSE overlays fail with ENOTSUP; arbitrary aliases are not projected. Container callers cannot enter this exception.
+
+Network Lookup bypasses path-only nodeDB even for outer callers. A separate registry retains only FUSE protocol identity and covered inode kind, needed to keep native protection submounts attached to their original dentries. Every lookup returns a fresh, authorized attribute snapshot; Getattr and IO always use the actual caller. Identity entries are released on Forget and contain no reusable network view. The opt-in pinned-library identity hook keeps those IDs stable without serving cached attributes. Entry and attribute TTLs are zero; the pinned FUSE library also bypasses its per-handle directory-data cache for these nodes; Getattr refreshes with the actual FUSE request PID rather than Attr's old snapshot. Existing DirectIO read policy remains. ReadDir operational errors retain errno rather than becoming ENOENT and a libc false empty success. Genuine missing paths keep ENOENT. Virtual-net Lookup/Getattr normalize host-side fstat UID/GID to host root so `SkipIdRemap` preserves nobody ownership inside mapped containers; writable opens are explicitly denied. Existing FUSE default permissions and emulation remain. An anchored task directory prevents lookup from switching to a recycled TID, but concurrent exec/setns and the final liveness-to-use window remain non-atomic.
 
 ## 日本語
 
@@ -168,3 +182,62 @@ mapped User namespace に入る前に開くのは信頼された proc metadata �
 可能な場合は終了 status で errno を伝え、daemon は転送失敗を成功として返しません。
 patched daemon と helper は対としてビルドし、配布します。
 FD と引数の契約は版管理された public API ではありません。
+
+### sysfs 転送と FUSE backing
+
+`patches/sysfs-transfer.patch` は、同じ固定ソースに proc patch の後で適用します。
+登録済み外側 User の新規 mount は upstream の dispatch を維持します。
+対象は外側 User の直下の子と、その子が所有する Mount、外側または子が所有する Network です。
+helper は mapped entry の前に nsfs FD で関係を確認し、outer User/Mount と実 requester Network だけに入ります。
+sysfs と scratch の全 mount は mapped 権限で行います。
+
+sysfs の FD3–6、8–10 は proc と同じ役割ですが、**FD7 は Network** です。
+proc FD7 の PID 契約は変更しません。
+FD11 以降は登録済み保護 source で、引数は mapped UID、GID、flags、相対保護 path です。
+新規 transfer/backing は、登録済みの filesystem type が `sysfs`、mountinfo Root が `/` の場合だけ許可します。
+`/sys` 全体の mask と部分 tree の bind は、target を変更する前に ENOTSUP で拒否します。
+初期 exec 前の既存 creation-time updateに kernel metadata だけを読む parser が `/sys` 配下の OCI mask、read-only、入れ子 submount をすべて取得します。
+親から子の順に並べ、取得時に mount ID、固定 source の device/inode、RO/nosuid/nodev/noexec の下限を照合します。
+必要 source の欠落は元の errno で失敗し、128 件を超える場合も拒否します。
+再帰的 clone は source 内の submount を保持します。
+
+外側 Mount から派生した private namespace の容量制限付き tmpfs で、実 Network に対応する sysfs を構築します。
+source の identity と保護属性を確認し、継承または要求した RO を再帰的に適用します。
+child User/Mount で完成 tree を lock した後、mapped worker が固定 target に転送します。
+全 FD 固定後、reaper guard 内で proc と同じ通知確認関数を呼んでから起動します。
+fallback はありません。
+通知確認、生存確認、commit は原子的ではなく、proc の確認地点と競合区間を共有します。
+競合して成立する mount にも保護を保持します。
+
+FUSE virtual-net は backing mode を使います。
+UID/GID/flags の後に `--lookup=devices/virtual/net/...` または `--open=devices/virtual/net/...` を渡し、FD8 は内部 socket になります。
+外側またはその直下の子が所有する Network に入った登録済み外側 caller も扱い、後者は owner の親を確認します。
+初期ホストや深い子の所有関係は拒否します。
+最終 creation-time update 前の runtime bootstrap 読み取りは upstream の処理を維持します。
+backing は登録済み外側 Mount から構築し、再帰を防ぐため登録済み virtual 親の FUSE emulation mount だけを除きます。
+その他の mask と RO source は維持します。
+RO 構築後に caller の mapped UID/GID へ移行し、capability を消し、範囲内の resource 一つだけを安全な rooted lookup で開きます。
+最終 symlink は O_PATH で調べ、raw symlink のたどり先は開きません。
+SCM_RIGHTS で resource FD だけを返し、tree FD、write FD、caller root への一時書き込みは提供しません。
+操作ごとに Network と thread を固定し、userspace cache は使いません。
+登録済み保護 source の mount 境界とその祖先だけに、内部の metadata 専用例外を設けます。
+host UID/GID0 で daemon 自身の固定 thread または直下の inode worker または capability を消す前の mapped helper の構築処理から来た要求を限定して扱います。
+不変 snapshot を atomic に公開し、upstream inode 収集が保持する container lock への再入を避けます。
+返すのは合成した directory 属性だけで、内容、列挙、symlink の先、write FD を公開せず、mount も行いません。
+最後の native source は mount ID と固定 FD の identity で照合し、container caller はこの例外に入りません。
+同じ network FUSE passthrough の OCI readonly self-bind は、clone すると同じ handler を再帰呼び出しするため、backing だけで例外として扱います。
+登録済み source FD、mount ID、readonly 属性を確認し、`@ro:` で指定した self-alias を requester の raw backing に同等の readonly/nosuid/nodev/noexec で投影します。
+転送 tree は元の alias mount と identity を保持し、その他の network FUSE overlay は ENOTSUP で拒否します。
+要求元と外側の `/proc` task directory を固定し、namespace/root の読み取り前に thread pidfd を取得します。
+task directory は再利用された TID への切り替えを防ぎますが、exec/setns や最終生存確認後の競合は原子的に防げません。
+
+外側 caller を含め network Lookup は path 単位の nodeDB を使いません。
+別の registry は FUSE の protocol identity と被覆 inode の種別だけを保持し、native 保護 submount が元の dentry に対応し続けるようにします。
+lookup は毎回、権限を確認した新しい属性を返し、Getattr と IO は実 caller を使います。
+Forget で identity を解放し、Network view を再利用しません。
+entry と属性 TTL は zero とし、固定した FUSE library の handle 単位 directory cache も迂回します。
+Getattr は実 FUSE requester を使って再取得します。
+Lookup/Getattr は host 側 fstat の UID/GID を host root に正規化し、SkipIdRemap による mapped container 内の nobody 所有を保持します。
+書き込み用 Open は明示的に拒否し、既存の DirectIO、default permissions、emulation を維持します。
+ReadDir の内部失敗は errno を保持し、libc が空の成功と扱う ENOENT に変換しません。
+実際に存在しない path の ENOENT は維持します。

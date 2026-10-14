@@ -21,6 +21,10 @@
     "libs": {
       "repository": "https://github.com/nestybox/sysbox-libs.git",
       "revision": "cacac19395528afa42b467a980b05d8d1c6d646c"
+    },
+    "fuse": {
+      "repository": "https://github.com/nestybox/fuse.git",
+      "revision": "5ce319439091b08f33b149cb2482039f1b0a24fe"
     }
   },
   "builder": "golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e",
@@ -28,10 +32,10 @@
   "source_sha256": {
     "helper/proc-mount-helper.c": "78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208",
     "patches/proc-transfer.patch": "d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838",
-    "tests/runtime/README.md": "8a9d7bb302d98fa51b5811c81974ad485d59ee1f3922e534a5df4c44c5522fe0",
+    "tests/runtime/README.md": "477e2890134732ca5f6f3d03d95c99bfeb458b8321b105e971f065751cf138ba",
     "tests/runtime/checkpoint-requester.c": "26a5776f56b13b1748c879ba5821fdfae0f21e1c17dc2085d4a3f5360f239077",
-    "tests/runtime/checkpoints.py": "7e3c0d7407c895b8b5ea55a44dad3c0b594bf6de422971e2bdc7204c69161b26",
-    "tests/runtime/helper-rejections.py": "b9b0786fa054d5876e9d80a79b25ec2291cda1d24510951b62604f45c960cd01",
+    "tests/runtime/checkpoints.py": "e5c5a5d5a7bd20ef20458cac98e6d9364d91d7a14e26ded1ae3a650a41b8ec2e",
+    "tests/runtime/helper-rejections.py": "fa95196d2089959bfd50495ac2410bbfa96557d59863bbb49a2729c3dec36e6d",
     "tests/runtime/thread-proc.c": "7602294c5bce3afe9b1dc5146c613a8a4c482c91d6f2bfa80011ffdacb24b6c5",
     "tests/runtime/verify-sys.py": "896c115941a61389cfc8aee0103d5e1b6b133372811237c081bd645a7832295b",
     "tests/runtime/verify.c": "b4b3185d608fd762c1d82c8e73889eb2e3d131eab46ed943ea8bfd58e8329190",
@@ -40,6 +44,23 @@
     "tests/unit/helper-checkpoint.c": "a7c82acb5c67f60998941939d1db080cf71dd84ba48cf7f558711a228fa64f3a",
     "tests/unit/helper-liveness.c": "4057cb5bf928be4f23ce40781304ae698bd92ef01d2ec3843ec99855007d5ec0",
     "tests/unit/lifecycle.c": "bdec46a5225b48a8d00bb992b3258db21cb70c118166aee4f86d3a024f24b5d3",
-    "tests/upstream/proc_policy_test.go": "c79bcef6a9932accce5cf4c118ccf0715670ae8943d38995d57a7a4b285fe664"
+    "tests/upstream/proc_policy_test.go": "c79bcef6a9932accce5cf4c118ccf0715670ae8943d38995d57a7a4b285fe664",
+    "helper/sysfs-mount-helper.c": "96b29b4b6cd32752f7ff2528951b3383bf4075d97cea2eb0abb16bcee03a23cc",
+    "patches/sysfs-transfer.patch": "d3025691c89c5d6595e58b23a3f8f2440b436e9e808a1d4ac0e29d2ba9f5fc6e",
+    "tests/upstream/sysfs_policy_test.go": "1bee81f922254430befe2ae16d991b1c5bdb8f44e18e503cd1ce4e1ea109be9b",
+    "tests/runtime/thread-sysfs.c": "e2272b1571429ae680e053da436ac14e2e52d6b3032256ab3f08d3ca13dbc213",
+    "tests/runtime/checkpoint-sysfs.c": "a6cbedf4611af92f639aa7dd849d25a82f7b2d82c4a43a7f81f0a7df57216120",
+    "tests/runtime/sysfs-network.py": "6831c6b303f06ed54108a1ecc545341a0d7da284b8cb052e5d1ae2865136792b",
+    "tests/unit/sysfs-checkpoint.c": "6841ab6a23cf11d29e3d8bb6dcb10c5f4c65009adc7ca0d1f079d71f4df86bd6",
+    "tests/unit/sysfs-liveness.c": "17ffdd90d145226adf77617e7bd26bfecc454297ff036f54bcad0f14978c702c",
+    "tests/static/test_sysfs.py": "04c89bc67fb0f5dfc9a4b721069f20411a1a49fbb5c0a524bf1c30c9a2789397",
+    "tests/runtime/sysfs-interleave.py": "fd6accf6549f5a67de83c792c59ce25f66896b63561949f6fe867e009bab9574",
+    "tests/upstream/sysfs_snapshot_test.go": "acce66e91dafa77189714c86bb632cfa418defb85a35e9a40c6d05fcd6f413be",
+    "tests/static/test_contracts.py": "6d784557b7aae7347a711e18af897435d1252e157650c6fd44f68a01d3ea7f77",
+    "tests/runtime/sysfs-failures.py": "3cd9e19c7c0b75f755fb52977f2167228a5f443456029f30d8a1faf58a5358bc",
+    "tests/unit/sysfs-failure-helper.c": "88416c32a329db29bc7802ea9edd63caae1d0a33bc4bd3be02115fff680812e1",
+    "tests/runtime/sysfs-write-policy.py": "99e325bdf1331238f97e8ee8202903032714ea901f235ee90554f1b6431a79b9",
+    "tests/upstream/sysfs_metadata_test.go": "ad5638936263d2b5d36b0591ceded9b7690915a4d5f8c589acfe0d47054bdcc6",
+    "tests/upstream/fuse_identity_test.go": "30e74691fa584dc876751fb56498767a774562c6318ebbe1435d0c3c2b95b6c5"
   }
 }

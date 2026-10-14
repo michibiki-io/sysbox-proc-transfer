@@ -5,6 +5,8 @@
 - [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries)
 - [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲)
 
+- [Sysfs consumer gate](#sysfs-consumer-gate) / [sysfs の consumer gate](#sysfs-の-consumer-gate)
+
 ## English
 
 ### Validated baseline
@@ -40,6 +42,17 @@ The thread API requirement applies to leaders too. Thread pidfd acquisition has 
 The local suite runs actual seccomp notification interruption, thread/process exit and leader/nonleader exec and delayed leader-exit lifecycle tests on the build client's kernel. The public Docker build runs the existing policy regression and the real notification pre-launch regression. These do not establish Sysbox runtime support. `verify.sh` now also invokes the real nonleader mount probe in distinct Mount namespaces, read-write and read-only. The trusted direct-helper checkpoint matrix and its pass criteria are documented in [design](design.md). Run them with the matched pair in the arm64 baseline; publish only architecture, kernel/runtime versions and outcomes. Keep private identifiers and raw logs local.
 
 The portable runtime runner requires independently supplied host PID/User namespace identifiers and runs as the caller inside a provisioned Sysbox container. A C compiler, Python 3 and bubblewrap must already be installed. It does not configure the host or provision containers. Local static/compilation checks and CI native builds verify packaging contracts, not the runtime baseline. Explicit `--platform` compilation depends on builder support and does not extend runtime support. This repository makes no byte-identical rebuild or full security audit claim.
+
+### Sysfs consumer gate
+
+Issue #5 adds code and focused fixtures for new nested sysfs and the virtual-net FUSE read repair. The research prototype was direct-launch only and left FUSE broken; it is not this production patch. New sysfs, existing `/sys` binds, and proc transfer are different paths. Static kernel source feasibility, compilation on amd64/arm64, and supplemental arm64/Linux 7.1 runtime checks cannot replace the required disposable **amd64, 6.18.18-talos, Sysbox 0.7.1, bwrap 0.12.0** test environment. Per the user’s [scope decision](https://github.com/michibiki-io/sysbox-proc-transfer/issues/5#issuecomment-6175051306), AC7 is deferred/unrun until talos-sysbox-installer integration. That integration must compare unpatched and configured artifacts through actual-path, FUSE, complete-policy, negative and lifecycle checks under the reported Pod conditions.
+
+Record outer/setup/inner maps, namespace ownership, CapEff, NoNewPrivs, seccomp/filter counts and syscall flags. Preserve UID/GID1001, hostUsers false, nonprivileged, drop ALL and no privilege escalation; do not weaken sandbox isolation. Do not use Talos-in-Docker or initial-host User mount authority. Docker/privileged child/kind smoke are distinct compatibility tests, not the nested solution. Existing proc import acceptance is independent. Keep raw machine logs, identities and credentials private.
+
+
+On 2026-10-15 the implementation pair passed supplemental arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 checks in a private daemon and disposable OCI containers: eight actual nonleader shared/new-net RW/RO cases (unchanged bwrap UID1001 and inner-root0→outer1001), non-default and network-descendant protections, inherited root RO, interleaved network/offset/attribute cache checks, symlink confinement, mapped-root nobody/write denial, backing failure injection, six ownership/liveness/flag rejections and focused final lifecycle representatives. Current proc and existing sys-bind regressions and helper-unset behavior passed. The earlier complete64 checkpoint matrix belongs to an intermediate draft; the final fix rounds used focused representatives.
+
+Separate compatibility paths passed with Docker 29.1.3, a privileged child proc mount, kind 0.30.0 and kindest/node v1.34.0 reaching Ready. The disposable OCI fixture required preloaded public arm64 images, nofile65536 and CPU delegation within its own new cgroup namespace. These privileges and fixture conditions are not the nested solution. Host daemon/configuration and existing clusters were untouched. Final native SHA-256: sysbox-fs `f92e612835d5c2cffbe9902d65a00f3280d26577f560f81201573e1dc0ee36d5`, sysfs helper `ba255be095ee0a46c7321ade56e2df109750faa62d4b3f83f0c0db0431bd9286`, unchanged proc helper `9125ecc309246e2bbdd1c83971a0737f0f7acc122d158eb5f5271a655b88c0fd`. Both architecture builds passed and their manifests match final input hashes. No byte-identical future rebuild, full audit or Talos support claim follows.
 
 ## 日本語
 
@@ -126,3 +139,32 @@ C compiler、Python 3、bubblewrap は事前に導入します。
 ローカル静的検査、コンパイル検査、CI native build は packaging の契約を確認し、基準環境の実行時検証を代替しません。
 明示的な `--platform` は builder の対応に依存し、実行時対応を拡大しません。
 byte 単位で一致する再ビルドや完全な安全性監査は保証しません。
+
+### sysfs の consumer gate
+
+Issue #5 は新規 nested sysfs と virtual-net FUSE 読み取りの修正コード、focused fixture を追加します。
+研究 prototype は直接起動だけを検査し、FUSE は未修復でした。
+production patch の検証済み成果として扱いません。
+新規 sysfs、既存 `/sys` bind、proc 転送は異なる経路です。
+source の静的検討、amd64/arm64 のコンパイル、arm64/Linux 7.1 の補助検査は、必須の **amd64、6.18.18-talos、Sysbox 0.7.1、bwrap 0.12.0** の隔離実環境検査を代替しません。
+ユーザーの[検証範囲の指定](https://github.com/michibiki-io/sysbox-proc-transfer/issues/5#issuecomment-6175051306)に従い、AC7 は talos-sysbox-installer 取り込み時まで deferred/unrun とします。
+取り込み時は、報告された Pod 条件で未パッチと設定済み成果物の実経路、FUSE、全保護、拒否、競合を比較する必要があります。
+
+outer、setup、inner の map、namespace owner、CapEff、NoNewPrivs、seccomp/filter 数、syscall flags を記録します。
+UID/GID1001、hostUsers false、非 privileged、drop ALL、権限昇格禁止と sandbox 隔離を維持します。
+Talos-in-Docker や初期ホスト User の mount 権限を解決策にしません。
+Docker、privileged child、kind の smoke は別経路の互換性検査です。
+既存 proc の取り込み条件は独立して維持し、実機生ログ、識別子、認証情報は公開しません。
+
+2026-10-15 に、一時 daemon と専用 OCI コンテナで arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 の補助検証を実施しました。
+変更なしの bwrap の inner UID1001 と、inner root0→outer1001 の非 leader について、共有／新設 Network と RW／RO の計8条件が成功しました。
+非既定と network 配下の保護、外側 root RO の継承、Network と offset／属性 cache の交互読み取り、symlink 範囲、mapped root の nobody 所有と書き込み拒否、backing 失敗注入、6拒否条件、最終コードの競合代表条件も成功しました。
+現在の proc、既存 sys bind、helper 未設定時の回帰検査も成功しました。
+全64条件の確認地点検査は中間 draft の結果とし、最終修正では代表条件だけを再検証しました。
+
+別経路の Docker 29.1.3、privileged child の proc mount、kind 0.30.0／kindest/node v1.34.0 の Ready 到達が成功しました。
+専用 OCI fixture は公開 arm64 image の事前取り込み、nofile65536、自身の新しい cgroup namespace 内の CPU 委譲を必要としました。
+この権限や構成を nested の解決策とは扱いません。
+ホスト daemon／設定と既存 cluster は変更していません。
+最終 native SHA-256 は前掲の英語節に記載し、両 architecture のビルドと最終入力 hash の一致を確認しました。
+将来の byte 一致、完全な監査、Talos 対応を意味しません。
