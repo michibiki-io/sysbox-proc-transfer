@@ -16,3 +16,4 @@
 !tests/upstream/sysfs_snapshot_test.go
 !tests/upstream/sysfs_metadata_test.go
 !tests/upstream/fuse_identity_test.go
+!tests/upstream/sysfs_dentry_test.go

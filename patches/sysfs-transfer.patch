@@ -144,17 +144,24 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  		d.server.RUnlock()
  		return *node, nil
  	}
-@@ -127,6 +129,9 @@
+@@ -127,6 +129,16 @@
  	// Handler execution.
  	info, err := handler.Lookup(ionode, handlerReq)
  	if err != nil {
 +		if networkUncached(ionode.Path()) {
++			// Invalidating a positive FUSE dentry detaches its submounts in
++			// every namespace. Preserve only registered protection identities;
++			// Getattr and all resource operations still authorize the caller.
++			if node, protected := d.server.networkProtectionLookup(handlerReq); protected {
++				resp.EntryValid = 0
++				return node, nil
++			}
 +			return nil, networkError(err)
 +		}
  		return nil, fuse.ENOENT
  	}
  
-@@ -163,14 +168,23 @@
+@@ -163,14 +175,23 @@
  		newNode = NewFile(handlerReq, &fuseAttrs, d.File.server)
  	}
  
@@ -179,7 +186,7 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  
  	return newNode, nil
  }
-@@ -312,6 +326,9 @@
+@@ -312,6 +333,9 @@
  	files, err := handler.ReadDirAll(ionode, handlerReq)
  	if err != nil {
  		logrus.Debugf("ReadDirAll() error: %v", err)
@@ -189,7 +196,7 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  		return nil, fuse.ENOENT
  	}
  
-@@ -373,3 +390,58 @@
+@@ -373,3 +397,104 @@
  
  	d.File.Forget()
  }
@@ -247,6 +254,52 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
 +	}
 +	file.lookupIdentity = identity
 +	return fresh
++}
++
++// networkProtectionLookup keeps a mounted protection's covered dentry valid when
++// this caller cannot obtain its network view. It returns immutable, read-only
++// traversal metadata, never a saved view or resource attributes. Mounted dentries
++// pin the existing protocol identity; an unknown identity is not manufactured.
++func (s *fuseServer) networkProtectionLookup(req *domain.HandlerRequest) (fs.Node, bool) {
++	if req.Container == nil {
++		return nil, false
++	}
++	snapshot, ok := req.Container.(interface {
++		SysfsSourceAncestor(string) (bool, bool, uint32, uint32)
++	})
++	if !ok {
++		return nil, false
++	}
++	ready, ancestor, _, _ := snapshot.SysfsSourceAncestor(req.Path)
++	if !ready || !ancestor {
++		return nil, false
++	}
++	s.RLock()
++	identity := s.networkIdentities[req.Path]
++	s.RUnlock()
++	if identity == nil {
++		return nil, false
++	}
++	kind := identity.(interface{ Mode() os.FileMode }).Mode().Type()
++	mode := os.FileMode(0444)
++	if kind&os.ModeDir != 0 {
++		mode = 0555
++	} else if kind&os.ModeSymlink != 0 {
++		mode = 0555
++	}
++	attr := &fuse.Attr{Inode: identity.(interface{ LookupProtocolInode() uint64 }).LookupProtocolInode(), Mode: kind | mode, Nlink: 1}
++	req.SkipIdRemap = true // immutable host-root metadata remains nobody in the container
++	var node fs.Node
++	var file *File
++	if kind&os.ModeDir != 0 {
++		dir := NewDir(req, attr, s)
++		node, file = dir, &dir.File
++	} else {
++		file = NewFile(req, attr, s)
++		node = file
++	}
++	file.lookupIdentity = identity
++	return node, true
 +}
 diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
 --- a/sysbox-fs/fuse/file.go

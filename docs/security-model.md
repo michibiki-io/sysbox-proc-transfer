@@ -35,6 +35,8 @@ Backing mode is read-only and restricted to the existing virtual-net handler. It
 
 The synchronous alarm, parent-death signal, daemon timeout and reaper guard bound children and descriptors. Live-thread notification interruption and leader replacement are not detectable by a final pidfd poll alone. Notification and move_mount are not atomic. No full security audit, installer support or Talos compatibility is claimed before the consumer gate.
 
+A registered network protection boundary or ancestor with an existing protocol identity must remain a valid positive FUSE entry even when this caller's backing Lookup fails. Linux invalidates an expired dentry on a LOOKUP error and detaches submounts on that shared dentry in every namespace, including locked protection clones. For these policy paths only, failed Lookup returns the same protocol identity/kind with fixed read-only traversal metadata (host-root IDs, zero size; no saved network attributes). Entry/attribute TTLs stay zero. This may expose the existence of a registered policy ancestor when the caller's Network lacks it; directory enumeration, Getattr, Open, Read and Readlink still obtain and authorize the actual caller view, and missing non-policy paths retain their errors. No contents or write access are granted. Unknown identities and pre-registration paths retain the original failure. See `tests/runtime/sysfs-dentry-protection.py` for rejected deeper-User, renamed-interface and injected-failure protection retention checks.
+
 ## 日本語
 
 ### 認証
@@ -114,3 +116,5 @@ alarm、parent-death signal、daemon timeout、reaper guard で child と FD の
 生存 thread の通知中断や leader の置き換えは最終 pidfd poll だけでは検出できません。
 通知確認と move_mount は原子的ではありません。
 完全な安全性監査や installer 対応を主張せず、consumer gate 前に Talos の対応完了と扱いません。
+
+登録済み network 保護の mount 境界と祖先に既存の protocol identity がある場合、要求元の backing Lookup が失敗しても、その FUSE entry は有効なまま維持します。Linux は期限切れ dentry の LOOKUP error で共有 dentry を失効させ、別 namespace の locked clone を含む配下の保護 mount を detach するためです。この policy path だけは同じ identity と種別の固定した読み取り専用 traversal metadata（host-root ID、size zero）を返し、保存した Network 属性は返しません。entry／属性 TTL は zero のままです。要求元の Network に存在しなくても登録済み policy 祖先の存在は見える場合がありますが、列挙、Getattr、Open、Read、Readlink は実際の caller view と認可を使い、policy 外の不在は元の error を維持します。内容や write 権限は与えず、未知の identity と登録前は元の失敗を返します。深い User、interface rename、失敗注入の後も外側と転送 tree の保護が残ることを `tests/runtime/sysfs-dentry-protection.py` で確認します。

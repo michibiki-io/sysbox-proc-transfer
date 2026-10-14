@@ -14,6 +14,7 @@ spec = importlib.util.spec_from_file_location("build_tool", ROOT / "scripts/buil
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 PUBLIC_FILES = {
+ "tests/upstream/sysfs_dentry_test.go", "tests/runtime/sysfs-dentry-protection.py",
  "tests/runtime/sysfs-write-policy.py", "helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "tests/unit/sysfs-checkpoint.c", "tests/unit/sysfs-liveness.c", "tests/static/test_sysfs.py", "tests/runtime/thread-sysfs.c", "tests/runtime/checkpoint-sysfs.c", "tests/runtime/sysfs-network.py", "tests/runtime/sysfs-interleave.py", "tests/runtime/sysfs-failures.py", "tests/unit/sysfs-failure-helper.c",
     "tests/runtime/README.md",
     'tests/runtime/thread-proc.c', 'tests/runtime/checkpoint-requester.c', 'tests/runtime/checkpoints.py', 'tests/unit/lifecycle.c', 'tests/unit/helper-checkpoint.c', 'tests/unit/helper-liveness.c', 'tests/static/test_lifecycle.py',
@@ -106,7 +107,7 @@ class Contracts(unittest.TestCase):
         included = {rule[1:] for rule in rules[1:] if rule.startswith("!")}
         copied = set(re.findall(r"^COPY (?!\-\-)(\S+) ",
                                 (ROOT / "build/Dockerfile").read_text(), re.M))
-        self.assertEqual(copied, {"helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go", "tests/unit/lifecycle.c"})
+        self.assertEqual(copied, {"tests/upstream/sysfs_dentry_test.go", "helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go", "tests/unit/lifecycle.c"})
         expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/", "tests/", "tests/upstream/", "tests/unit/"}
         self.assertEqual(included, expected)
         self.assertTrue(all(not any(c in rule for c in "*?") for rule in included))

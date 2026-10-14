@@ -89,6 +89,8 @@ For complete policy coverage, provision the disposable container with non-defaul
 
 Record outer/setup/inner maps, ownership, capability/NNP/seccomp/filter state, kernel/architecture/runtime versions, request flags and hashes of unpatched/patched binaries. The Linux 6.18.18-talos amd64 gate is deferred/unrun; supplemental arm64/Linux 7.1/bwrap 0.9 results are not Talos support. Existing proc and `/sys` bind acceptance remain independent. Rootful Docker/privileged child/kind smoke must be recorded as separate paths.
 
+Combine network-nested protections with negative and rejected lookups: register an OCI mask on `/sys/devices/virtual/net/lo/ifalias` and a readonly self-bind on `lo/statistics` in the disposable container, then run `python3 tests/runtime/sysfs-dentry-protection.py` as the capable mapped direct-child observer in its own Mount namespace. It creates only its own transfer target, probes deeper User namespaces and a fresh child-owned Network whose loopback is renamed, then checks both original and transferred mount IDs/identities/floors and detach/remount denial. A separately configured task-only failure helper may use `--failure-switch /tmp/issue5-dentry-switch`; the switch must resolve to the same new task-owned file in helper and caller views. Failure must remain explicit EIO while protection dentries survive. Never run this with an existing consumer daemon or on host interfaces.
+
 ## 日本語
 
 ### 実際の Sysbox 経路
@@ -218,3 +220,5 @@ outer、setup、inner の map、所有関係、capability/NNP/seccomp/filter、�
 amd64/Linux 6.18.18-talos の gate は deferred/unrun とし、arm64/Linux 7.1/bwrap 0.9 の補助結果で対応済みとは扱いません。
 既存 proc と `/sys` bind の受け入れ条件は独立して保持します。
 Docker、privileged child、kind の smoke は別経路の結果として記録します。
+
+network 配下の保護と、不在・拒否 Lookup を組み合わせて検査します。隔離コンテナの登録前に `lo/ifalias` の OCI mask と `lo/statistics` の readonly self-bind を用意し、自身の Mount namespace に属する capable mapped な直下の子 observer から `python3 tests/runtime/sysfs-dentry-protection.py` を実行します。自身の転送 target、深い User、loopback を rename した新しい child-owned Network だけを使い、外側と転送 tree の mount ID、identity、保護属性、detach／remount 拒否を確認します。別の task 専用 failure helper では `--failure-switch /tmp/issue5-dentry-switch` を使用でき、helper と caller から同じ新しい task 所有 file が見える必要があります。明示的な EIO と保護 dentry の維持を要求し、既存 consumer daemon と host interface は対象にしません。
