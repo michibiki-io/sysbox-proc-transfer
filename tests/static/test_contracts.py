@@ -14,6 +14,8 @@ spec = importlib.util.spec_from_file_location("build_tool", ROOT / "scripts/buil
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 PUBLIC_FILES = {
+    "tests/runtime/README.md",
+    'tests/runtime/thread-proc.c', 'tests/runtime/checkpoint-requester.c', 'tests/runtime/checkpoints.py', 'tests/unit/lifecycle.c', 'tests/unit/helper-checkpoint.c', 'tests/unit/helper-liveness.c', 'tests/static/test_lifecycle.py',
     "LICENSE", "LICENSES/Apache-2.0.txt", "THIRD_PARTY_NOTICES.md", "README.md",
     "docs/design.md", "docs/security-model.md", "docs/compatibility.md",
     "helper/proc-mount-helper.c", "patches/proc-transfer.patch",
@@ -103,8 +105,8 @@ class Contracts(unittest.TestCase):
         included = {rule[1:] for rule in rules[1:] if rule.startswith("!")}
         copied = set(re.findall(r"^COPY (?!\-\-)(\S+) ",
                                 (ROOT / "build/Dockerfile").read_text(), re.M))
-        self.assertEqual(copied, {"helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go"})
-        expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/", "tests/", "tests/upstream/"}
+        self.assertEqual(copied, {"helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go", "tests/unit/lifecycle.c"})
+        expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/", "tests/", "tests/upstream/", "tests/unit/"}
         self.assertEqual(included, expected)
         self.assertTrue(all(not any(c in rule for c in "*?") for rule in included))
         # Runtime diagnostics, documents, git metadata and outputs cannot enter the build context.

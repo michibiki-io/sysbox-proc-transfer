@@ -30,7 +30,8 @@ RUN PATH="/go/bin:$PATH" make -C /src/sysbox/sysbox-ipc sysbox-ipc \
     && test -s /src/sysbox/sysbox-ipc/sysboxMgrGrpc/sysboxMgrProtobuf/sysboxMgrProtobuf.pb.go
 WORKDIR /src/sysbox/sysbox-fs
 COPY tests/upstream/proc_policy_test.go /src/sysbox/sysbox-fs/seccomp/proc_policy_test.go
-RUN CGO_ENABLED=1 go test -tags 'netgo osusergo' ./seccomp -run '^TestProcPolicyBeforeNestedTransfer$' -count=1
+COPY tests/unit/lifecycle.c /src/sysbox/sysbox-fs/seccomp/testdata/proc_lifecycle.c
+RUN CGO_ENABLED=1 go test -tags 'netgo osusergo' ./seccomp -run '^TestProc(PolicyBeforeNestedTransfer|RequesterThreadPidfd|TransferInvalidNotificationDoesNotLaunch|TransferRealNotification)$' -count=1
 RUN CGO_ENABLED=1 go build -buildvcs=false -trimpath -tags 'netgo osusergo' \
     -ldflags "-linkmode external -extldflags -static -X main.edition=Community -X main.version=0.7.1-proc-transfer -X main.commitId=${FS_REV}+proc-transfer" \
     -o /out/sysbox-fs ./cmd/sysbox-fs

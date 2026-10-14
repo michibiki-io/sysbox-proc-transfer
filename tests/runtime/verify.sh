@@ -28,3 +28,15 @@ bwrap --die-with-parent --unshare-all --share-net \
   --ro-bind "$work" "$work" \
   --dir /tmp/proc --proc /proc --cap-add CAP_SYS_ADMIN -- \
   "$work/verify" readonly /tmp/proc
+
+# Actual nonleader notification/helper path, with a separate observer in the
+# requester's Mount namespace and an unchanged leader Mount namespace.
+# Keep the outer proc mount attributes for the captured protection policy;
+# the unchanged readonly-root bwrap invocation is verified above.
+cc -O2 -Wall -Wextra -Werror -pthread "$script_dir/thread-proc.c" -o "$work/thread-proc"
+for mode in readwrite readonly; do
+  bwrap --die-with-parent --unshare-all --share-net \
+    --bind / / --dev-bind /dev /dev --tmpfs /tmp \
+    --ro-bind "$work" "$work" --cap-add CAP_SYS_ADMIN -- \
+    "$work/thread-proc" /tmp/thread-proc "$mode"
+done

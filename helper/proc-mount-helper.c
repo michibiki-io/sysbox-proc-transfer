@@ -22,7 +22,7 @@
 
 /* Internal synchronous helper. FDs supplied exclusively by sysbox-fs:
  * 3 outer user, 4 outer mount, 5 requester user, 6 requester mount,
- * 7 requester PID, 8 target directory, 9 outer root, 10 requester pidfd,
+ * 7 requester PID, 8 target directory, 9 outer root, 10 requester thread pidfd,
  * 11+ protected sources. Only trusted host proc metadata is opened before mapped-user entry;
  * every mount operation runs in the registered mapped user namespace. */
 static void die(const char *s) { int e=errno?errno:EIO;fprintf(stderr,"proc-transfer: %s: %s\n",s,strerror(e));_exit(e<256?e:EIO); }
@@ -34,7 +34,15 @@ static void putat(int proc,pid_t child,const char*name,const char*s){char p[80];
 static int waitcode(pid_t p){int s;ck(waitpid(p,&s,0),"wait");return WIFEXITED(s)?WEXITSTATUS(s):EIO;}
 static void sendfd(int s,int f){char c='F',b[CMSG_SPACE(sizeof(int))]={0};struct iovec v={&c,1};struct msghdr m={.msg_iov=&v,.msg_iovlen=1,.msg_control=b,.msg_controllen=sizeof(b)};struct cmsghdr *h=CMSG_FIRSTHDR(&m);h->cmsg_level=SOL_SOCKET;h->cmsg_type=SCM_RIGHTS;h->cmsg_len=CMSG_LEN(sizeof(int));memcpy(CMSG_DATA(h),&f,sizeof(f));ck(sendmsg(s,&m,MSG_NOSIGNAL),"send tree");}
 static int recvfd(int s){char c,b[CMSG_SPACE(sizeof(int))]={0};struct iovec v={&c,1};struct msghdr m={.msg_iov=&v,.msg_iovlen=1,.msg_control=b,.msg_controllen=sizeof(b)};if(recvmsg(s,&m,MSG_CMSG_CLOEXEC)!=1)die("receive tree");struct cmsghdr*h=CMSG_FIRSTHDR(&m);need(h&&h->cmsg_level==SOL_SOCKET&&h->cmsg_type==SCM_RIGHTS&&h->cmsg_len==CMSG_LEN(sizeof(int))&&!(m.msg_flags&MSG_CTRUNC),"tree fd protocol");int f;memcpy(&f,CMSG_DATA(h),sizeof(f));return f;}
-static void alive(void){struct pollfd p={10,POLLIN,0};int r=poll(&p,1,0);ck(r,"pidfd poll");need(r==0,"requester alive");}
+/* FD 10 is PIDFD_THREAD: nonleader exit is observable without group exit.
+ * A prematurely exited/replaced leader may remain unreadable while its group
+ * survives. Notification invalidation is a separate condition, checked by the daemon. */
+static void alive(void){
+ struct pollfd p={10,POLLIN,0};int r;
+ do{r=poll(&p,1,0);}while(r<0&&errno==EINTR);
+ ck(r,"pidfd poll");
+ if(r){errno=(p.revents&POLLNVAL)?EBADF:ESRCH;die("requester alive");}
+}
 static unsigned long number(const char*s){char *end;errno=0;unsigned long n=strtoul(s,&end,10);need(!errno&&*s&&!*end,"numeric argument");return n;}
 int main(int argc,char**argv){
  guard();need(geteuid()==0,"root launcher");need(argc>=4&&argc<=132,"argument count");
@@ -112,7 +120,7 @@ int main(int argc,char**argv){
  ready='A';ck(write(pair[0],&ready,1),"locker mapped acknowledgement");close(hostproc);
  int tree=recvfd(pair[0]);close(pair[0]);int code=waitcode(locker);if(code)_exit(code);
  ck(umount2(work,MNT_DETACH),"discard private stage");ck(rmdir(work),"remove stage directory");
- alive();ck(setns(6,CLONE_NEWNS),"enter sandbox mount");
+ ck(setns(6,CLONE_NEWNS),"enter sandbox mount");alive();
  /* Last operation is the atomic commit; every earlier failure leaves target
   * unchanged and destroys the private/detached trees on process exit. */
  ck(syscall(SYS_move_mount,tree,"",8,"",MOVE_MOUNT_F_EMPTY_PATH|MOVE_MOUNT_T_EMPTY_PATH),"commit locked proc tree");close(tree);return 0;

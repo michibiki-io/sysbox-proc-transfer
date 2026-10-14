@@ -21,6 +21,8 @@ Registered proc mounts, read-only paths and masked paths are deduplicated and cl
 
 The implemented flag whitelist is `MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME | MS_STRICTATIME | MS_SILENT | MS_LAZYTIME`. Unknown bits are rejected. New proc mounts always receive nosuid/nodev/noexec attributes. Whitelist membership does not imply that every combination succeeds: `MS_STRICTATIME` fails on the validated baseline. Proc root ownership is deliberately not rewritten with initial-user capabilities; a single-UID sandbox can see the overflow UID while process entries retain mapped ownership.
 
+The daemon binds pinned requester objects to the original notification with an ID check before launch. The helper polls a thread pidfd on the actual TID before staging and immediately before transfer; it cannot observe live-thread notification invalidation, premature leader exit while its group survives, or leader replacement by another thread’s exec. The notification race starts at the pre-launch check, the observable nonleader/whole-process exit race at the final poll. Undetectable leader exit/replacement shares the notification race boundary. A raced commit retains every protection; upstream revalidation and the kernel notification send prevent success to an invalid ID. See [design checkpoints](design.md) for exact actors, failure outcomes and deterministic test criteria.
+
 Parent death signals, helper alarm, daemon timeout, nondumpable workers, requester pidfd checks, private staging and synchronous reaping limit lifecycle and exposure. Unsupported APIs fail before final commit. These mechanisms are preserved from the validated implementation; packaging is not a comprehensive security audit. The portable tests check existing protection behavior, unauthorized direct launch, and the included namespace/liveness/flag rejection cases; they are not an exhaustive attack suite. See [compatibility](compatibility.md) for prior failure-condition results and unverified kernel requirements.
 
 ## 日本語
@@ -59,6 +61,14 @@ whitelist に含まれる全組み合わせの成功を保証するものでは�
 `MS_STRICTATIME` は検証済み環境で失敗します。
 proc root の所有者を初期 User namespace の権限で書き換えません。
 単一 UID の sandbox では overflow UID として見える場合がありますが、process entry は mapped ownership を保持します。
+
+daemon は FD 固定後、起動前の通知 ID 確認で要求元と元の通知を結び付けます。
+helper は実際の TID の thread pidfd を staging 前と転送直前に確認します。
+生存した thread の通知失効や、group が生存する間の leader の先行終了や、別 thread の exec による leader の置き換えは検出できません。
+通知の競合区間は起動前の確認から、poll で検出できる終了の競合区間は最後の poll から始まります。
+検出できない leader の先行終了や置き換えは、通知の競合区間に含めます。
+競合して成立する mount でも全保護を保持し、upstream の再確認と kernel への通知送信は失効 ID への成功を防ぎます。
+実行主体、失敗時の結果、決定的な検査の合否基準は [設計](design.md) を参照してください。
 
 parent death signal、helper alarm、daemon timeout、nondumpable worker、requester pidfd 検査、private staging、同期 reaping で lifecycle と露出を制御します。
 未対応 API では最終 commit 前に失敗します。

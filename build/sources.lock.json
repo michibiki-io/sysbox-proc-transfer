@@ -26,9 +26,20 @@
   "builder": "golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e",
   "generator": "github.com/golang/protobuf/protoc-gen-go@v1.3.5",
   "source_sha256": {
-    "helper/proc-mount-helper.c": "a91a1926dd072ff8a97cd1e7ac01a307a95ca0bf0f79d9c9dfff59b5ced23498",
-    "patches/proc-transfer.patch": "856d411a1461443636ac21922a0d9e471a2189ca1f0c76b8b54f4f3d9261bae1",
+    "helper/proc-mount-helper.c": "78444175cb3e046093442db8e5cad116c2310d4c4879a26d05ec0ba386217208",
+    "patches/proc-transfer.patch": "d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838",
+    "tests/runtime/README.md": "8a9d7bb302d98fa51b5811c81974ad485d59ee1f3922e534a5df4c44c5522fe0",
+    "tests/runtime/checkpoint-requester.c": "26a5776f56b13b1748c879ba5821fdfae0f21e1c17dc2085d4a3f5360f239077",
+    "tests/runtime/checkpoints.py": "7e3c0d7407c895b8b5ea55a44dad3c0b594bf6de422971e2bdc7204c69161b26",
+    "tests/runtime/helper-rejections.py": "b9b0786fa054d5876e9d80a79b25ec2291cda1d24510951b62604f45c960cd01",
+    "tests/runtime/thread-proc.c": "7602294c5bce3afe9b1dc5146c613a8a4c482c91d6f2bfa80011ffdacb24b6c5",
+    "tests/runtime/verify-sys.py": "896c115941a61389cfc8aee0103d5e1b6b133372811237c081bd645a7832295b",
     "tests/runtime/verify.c": "b4b3185d608fd762c1d82c8e73889eb2e3d131eab46ed943ea8bfd58e8329190",
-    "tests/runtime/verify-sys.py": "896c115941a61389cfc8aee0103d5e1b6b133372811237c081bd645a7832295b"
+    "tests/runtime/verify.sh": "b726aa1ef01ea7accf2456b2c13d7766d3ccea66aebaa95a4586449b1bb1d6dc",
+    "tests/static/test_lifecycle.py": "e37dfe690b743a9e81167c89c98715e1b130ac7241be830fcfba96fe1c7a546c",
+    "tests/unit/helper-checkpoint.c": "a7c82acb5c67f60998941939d1db080cf71dd84ba48cf7f558711a228fa64f3a",
+    "tests/unit/helper-liveness.c": "4057cb5bf928be4f23ce40781304ae698bd92ef01d2ec3843ec99855007d5ec0",
+    "tests/unit/lifecycle.c": "bdec46a5225b48a8d00bb992b3258db21cb70c118166aee4f86d3a024f24b5d3",
+    "tests/upstream/proc_policy_test.go": "c79bcef6a9932accce5cf4c118ccf0715670ae8943d38995d57a7a4b285fe664"
   }
 }
