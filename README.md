@@ -1,14 +1,23 @@
-# Sysbox proc transfer
+# Sysbox proc transfer / Sysbox の procfs 転送
 
-## Contents / 目次
+## Table of Contents / 目次
 
-- [English](#english): [Build](#build), [Verify](#verify), [License](#license)
-- [日本語](#日本語): [ビルド](#ビルド), [検証](#検証), [ライセンス](#ライセンス)
-- [Design / 設計](docs/design.md)
-- [Security model / 安全性の設計](docs/security-model.md)
-- [Compatibility / 動作条件](docs/compatibility.md)
+- [English](#english)
+  - [Overview](#overview)
+  - [Build](#build)
+  - [Verify](#verify)
+  - [Documentation](#documentation)
+  - [License](#license)
+- [日本語](#日本語)
+  - [概要](#概要)
+  - [ビルド](#ビルド)
+  - [検証](#検証)
+  - [関連文書](#関連文書)
+  - [ライセンス](#ライセンス)
 
 ## English
+
+### Overview
 
 This repository packages the validated Sysbox v0.7.1 patch and C helper that let an unchanged, unprivileged-user bubblewrap `--proc /proc` invocation create procfs for its sandbox PID namespace. A review correction applies the existing outer procfs read-only normalization before nested dispatch; other validated transfer behavior is retained. The implementation preserves registered procfs protections and User/PID/Mount isolation. Its validated baseline is arm64, Linux 7.1, Sysbox 0.7.1 and bubblewrap 0.9.0. Packaging does not broaden runtime support or constitute a full security audit.
 
@@ -26,7 +35,7 @@ The default is a native build. `dist/` receives `sysbox-fs`, `proc-mount-helper`
 
 [build/sources.lock.json](build/sources.lock.json) is the authoritative pin source. The wrapper supplies its values as Docker build arguments, checks source integrity hashes, and the builder checks root/component commits after recursive submodule initialization. IPC protobuf generation with `protoc-gen-go` v1.3.5 runs before building `sysbox-fs`. A focused upstream-package regression test verifies read-only policy normalization before nested dispatch without executing a helper or changing mounts. The patch retains upstream component paths and is applied at the Sysbox root. The namespace-entry C code is linked into `sysbox-fs`; standalone `sysbox-runc` and `sysbox-mgr` need no replacement for this patch.
 
-Pinned inputs and recorded hashes do not establish byte-identical rebuilds. Builder apt repositories and upstream Go module availability remain external dependencies. A successful build on another architecture is compilation evidence only, not runtime validation. This issue publishes source, not binaries.
+Pinned inputs and recorded hashes do not establish byte-identical rebuilds. Builder apt repositories and upstream Go module availability remain external dependencies. A successful build on another architecture is compilation evidence only, not runtime validation. This repository publishes source, not binaries.
 
 ### Verify
 
@@ -59,57 +68,67 @@ Other modes are `dead-requester`, `unsupported-flags`, and `mapped-launcher`. `O
 
 CI runs focused checks and a native container build from public inputs. It does not run the supported Sysbox runtime environment. See [compatibility](docs/compatibility.md) for the distinction between prior baseline results and checks performed on this packaging.
 
+### Documentation
+
+- [Design](docs/design.md): procfs transfer flow and the internal daemon/helper contract.
+- [Security model](docs/security-model.md): authorization, namespace isolation and registered procfs protections.
+- [Compatibility](docs/compatibility.md): validated conditions, review correction checks and remaining limitations.
+
 ### License
 
 Original helper, validation, build tooling and documentation use the root [MIT license](LICENSE). The Sysbox patch is an Apache-2.0 derivative; upstream attribution and license are retained in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Static binary redistribution requires separate third-party license review, including applicable LGPL obligations; root MIT does not cover every linked dependency.
 
 ## 日本語
 
-このリポジトリは、検証済みの Sysbox v0.7.1 patch と C helper を独立利用できる構成にまとめます。
-一般ユーザーの bubblewrap 呼び出しを変更せず、`--proc /proc` で sandbox 自身の PID namespace に対応する procfs を作成します。
-登録済みの procfs 保護と User/PID/Mount namespace の隔離を維持します。
-検証済みの基準環境は arm64、Linux 7.1、Sysbox 0.7.1、bubblewrap 0.9.0 です。
-レビューで判明した read-only 継承の抜けを修正し、既存の判定を nested 転送前に適用します。
+### 概要
+
+このリポジトリは、検証済みの Sysbox v0.7.1 のパッチと C 製の補助プログラム（**helper**）を、独立して利用できる構成にまとめます。
+一般ユーザーの bubblewrap 呼び出しを変更せず、`--proc /proc` で sandbox 自身の PID 名前空間に対応する procfs を作成します。
+レビューで判明した読み取り専用属性の継承漏れを修正し、既存の判定を入れ子の名前空間への転送前に適用します。
 その他の検証済み処理は維持しています。
+登録済みの procfs 保護と User/PID/Mount 名前空間の隔離を維持します。
+検証済みの基準環境は arm64、Linux 7.1、Sysbox 0.7.1、bubblewrap 0.9.0 です。
 今回の整理は動作対応の拡大や完全な安全性監査を意味しません。
 
 ### ビルド
 
-ビルドクライアントには Python 3 と、動作する buildx/BuildKit builder を使える Docker CLI が必要です。
-ホストの C compiler、Go toolchain、既存 Sysbox checkout は不要です。
-コンパイルとパッケージ導入は builder 内で行い、公開 upstream を HTTPS で取得します。
+ビルドを実行するクライアントには Python 3 と Docker CLI が必要です。
+Docker CLI から buildx/BuildKit のビルダーを利用できるように構成します。
+ホストに C コンパイラーや Go ツールチェーン、既存の Sysbox チェックアウトを用意する必要はありません。
+コンパイルとパッケージの導入はビルダー内で行い、公開されている upstream の入力を HTTPS で取得します。
 
 ```sh
 python3 scripts/build.py
-# builder が対応する場合、単一の target platform を指定できます。
+# ビルダーが対応する場合、単一の対象プラットフォームを指定できます。
 python3 scripts/build.py --platform linux/arm64 --output dist
 ```
 
-既定は native build です。
-scratch stage の BuildKit local output から、`dist/` に `sysbox-fs`、`proc-mount-helper`、`manifest.json` を出力します。
-manifest は ELF architecture、component revision、builder digest、generator version、input/output SHA-256 を記録し、マシン識別情報やローカルパスを含めません。
-二つの binary は同じビルドの対として扱います。
-`sysbox-fs` の環境変数 `SYSBOX_PROC_TRANSFER_HELPER` に、信頼する helper executable の絶対パスを指定します。
+既定ではビルダーのネイティブアーキテクチャ向けにビルドします。
+scratch ステージから BuildKit のローカル出力を使い、`dist/` に `sysbox-fs`、`proc-mount-helper`、`manifest.json` を出力します。
+manifest は ELF のアーキテクチャ、コンポーネントのリビジョン、ビルダーのダイジェスト、生成器のバージョン、入出力の SHA-256 を記録します。
+マシン識別情報やローカルパスは含めません。
+二つのバイナリは同じビルドで生成した対として扱います。
+`sysbox-fs` の環境変数 `SYSBOX_PROC_TRANSFER_HELPER` に、信頼する helper の実行ファイルの絶対パスを指定します。
 未設定の場合は従来の proc mount 処理を使用します。
-コンテナの呼び出し元が executable や環境変数を書き換えられないように管理します。
+コンテナの呼び出し元が実行ファイルや環境変数を書き換えられないように管理します。
 ホストの導入設定は本リポジトリの対象外です。
 
 固定値の正本は [build/sources.lock.json](build/sources.lock.json) です。
-wrapper は固定値を Docker build argument に渡し、source integrity hash を確認します。
-builder は再帰的な submodule 初期化後に root と component の commit を確認します。
+ビルドスクリプトは固定値を Docker のビルド引数に渡し、ソースの整合性をハッシュで確認します。
+ビルダーはサブモジュールを再帰的に初期化した後、ルートと各コンポーネントのコミットを確認します。
 `protoc-gen-go` v1.3.5 による IPC protobuf 生成を `sysbox-fs` のビルドより先に実行します。
-upstream package 内の対象を絞った regression test で、helper の実行や mount 変更なしに nested 分岐前の read-only 継承を確認します。
-patch の upstream component path は保持し、Sysbox root で適用します。
-namespace-entry の C コードは `sysbox-fs` にリンクされるため、この patch のために単体の `sysbox-runc` や `sysbox-mgr` を置き換える必要はありません。
+upstream パッケージ内の回帰テストで、helper の実行や mount の変更なしに、入れ子の名前空間を扱う分岐より前の読み取り専用属性の継承を確認します。
+パッチは upstream のコンポーネントパスを保持し、Sysbox のルートディレクトリで適用します。
+名前空間に入る処理の C コードは `sysbox-fs` にリンクされるため、このパッチのために単体の `sysbox-runc` や `sysbox-mgr` を置き換える必要はありません。
 
-固定 input と hash の記録だけでは、再ビルドの byte 単位の一致を保証できません。
-builder の apt repository と upstream Go module の可用性は外部依存です。
-別 architecture のビルド成功はコンパイルの確認であり、実行時の検証ではありません。
-この Issue では source を公開し、binary は公開しません。
+入力の固定とハッシュの記録だけでは、再ビルド時にバイト単位で一致することを保証できません。
+ビルダーの apt リポジトリと upstream の Go モジュールの可用性は外部依存です。
+別のアーキテクチャでのビルド成功はコンパイルの確認であり、実行時の検証ではありません。
+このリポジトリではソースを公開し、バイナリは公開しません。
 
 ### 検証
 
-ローカルの静的検査には Python 3、Bash、Linux header を使える C compiler が必要です。
+ローカルの静的検査には Python 3、Bash、Linux ヘッダーを使える C コンパイラーが必要です。
 
 ```sh
 python3 -m unittest discover -s tests/static -v
@@ -117,28 +136,29 @@ python3 -m unittest discover -s tests/static -v
 
 実行時検証は、構成済みの Sysbox コンテナ内で既存の一般ユーザーとして実行します。
 `cc`、`/usr/bin/python3`、bubblewrap は事前に用意します。
-script は依存パッケージを導入しません。
-実際のホスト PID/User namespace の識別子を、運用者が別途取得して位置引数に渡します。
+スクリプトは依存パッケージを導入しません。
+実際のホスト PID/User 名前空間の識別子を、運用者が別途取得して位置引数に渡します。
 形式は `readlink` が返す `pid:[number]` と `user:[number]` です。
 コンテナ内から取得した値をホスト識別子として使いません。
 
 ```sh
 bash tests/runtime/verify.sh "$HOST_PID_NAMESPACE" "$HOST_USER_NAMESPACE"
-# 同じコンテナ内で任意に実行する stress check:
+# 同じコンテナ内で任意に実行する負荷検査:
 python3 tests/runtime/stress-proc.py
 ```
 
-検証 script は script 相対パスと呼び出し元所有の `mktemp` directory を使い、終了時に作業ファイルを削除します。
-元の bwrap command、sandbox PID identity、seccomp、登録済み保護の inode、mask、read-only 属性、detach 拒否、再帰的 read-only procfs を確認します。
-`/sys` の検査は `--ro-bind /sys /sys` で保持した tree の確認です。
-新しい nested sysfs mount の修正を検証するものではありません。
-任意の stress case は、8 worker による 500 回の変更なし bwrap mount と、並行する nsenter/FUSE reaping を確認します。
-検査結果と namespace 識別子はローカル診断情報として扱い、実機の生ログを公開しません。
+検証スクリプトは自身の配置先からの相対パスと、呼び出し元が所有する `mktemp` ディレクトリを使います。
+作業ファイルは終了時に削除します。
+元の bwrap コマンド、sandbox の PID 名前空間との一致、seccomp、登録済み保護の inode、マスク、読み取り専用属性、取り外しの拒否、再帰的に読み取り専用にした procfs を確認します。
+`/sys` の検査対象は、`--ro-bind /sys /sys` で保持した既存のツリーです。
+新しい入れ子の sysfs mount の修正を検証するものではありません。
+任意の負荷検査では、8 ワーカーによる 500 回の変更なしの bwrap mount と、並行する nsenter/FUSE プロセスの回収を確認します。
+検査結果と名前空間の識別子はローカルの診断情報として扱い、実機の生ログを公開しません。
 
-既存の helper 拒否検査は、信頼された launcher 環境で実行します。
+既存の helper 拒否検査は、信頼された起動元の環境で実行します。
 運用者が渡すコンテナ内実行コマンドで、この検査専用の sandbox を作成します。
-Python 3.12 以降と namespace metadata にアクセスできる root が必要です。
-daemon の設定や再起動は行いません。
+Python 3.12 以降と、名前空間のメタデータにアクセスできる root 権限が必要です。
+デーモンの設定や再起動は行いません。
 専用テストコンテナを使い、一回の呼び出しで一つの拒否条件を指定します。
 
 ```sh
@@ -148,20 +168,26 @@ python3 tests/runtime/helper-rejections.py \
   --exec docker exec --user "$CALLER_UID:$CALLER_GID" test-container
 ```
 
-他の mode は `dead-requester`、`unsupported-flags`、`mapped-launcher` です。
-`OUTER_INIT_PID` には launcher の proc view における登録済み outer container の init PID を渡します。
-検査は固有の識別子を付けた自分の sandbox だけを探索し、固定した pidfd で終了させます。
-任意の target PID を終了対象として受け取る設計にはしていません。
-helper の mount は引き続き外側の mapped User namespace の権限で行います。
+他の検査モードは `dead-requester`、`unsupported-flags`、`mapped-launcher` です。
+`OUTER_INIT_PID` には、起動元の procfs から見た、登録済み外側コンテナの init PID を渡します。
+検査は固有の識別子を付けた自身の sandbox だけを探索し、固定した pidfd で終了させます。
+終了対象として任意の PID を受け取ることはありません。
+helper の mount は引き続き、UID/GID をマッピングした外側の User 名前空間の権限で行います。
 
-CI は静的検査と公開 input からの native container build を実行します。
+CI は静的検査と、公開されている入力からのネイティブコンテナビルドを実行します。
 対応する Sysbox 環境での実行時検証は行いません。
-過去の基準結果と今回の packaging の検査の区別は [動作条件](docs/compatibility.md) を参照してください。
+過去の基準環境での検証結果と、本リポジトリの構成で実施した検査の区別は、[動作条件](docs/compatibility.md) を参照してください。
+
+### 関連文書
+
+- [設計](docs/design.md)：procfs 転送の流れとデーモン/helper 間の内部契約。
+- [安全性の設計](docs/security-model.md)：認証、名前空間の隔離、登録済みの procfs 保護。
+- [動作条件](docs/compatibility.md)：検証済みの条件、レビュー修正の検査、残る制約。
 
 ### ライセンス
 
-独自の helper、検証コード、build tooling、文書には root の [MIT license](LICENSE) を適用します。
-Sysbox patch は Apache-2.0 の派生物です。
-upstream の帰属表示と license は [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) と [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に保持しています。
-static binary を再配布する packager は、適用される LGPL の義務を含めて third-party license を別途確認する必要があります。
-root の MIT はリンクされる全依存物を対象にしません。
+独自の helper、検証コード、ビルドツール、文書には、ルートディレクトリの [MIT ライセンス](LICENSE) を適用します。
+Sysbox のパッチは Apache-2.0 の派生物です。
+upstream の帰属表示とライセンスは [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) と [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に保持しています。
+静的リンクしたバイナリを再配布する場合は、適用される LGPL の義務を含め、第三者のライセンスを別途確認する必要があります。
+ルートディレクトリの MIT ライセンスは、リンクされるすべての依存物を対象にするものではありません。
