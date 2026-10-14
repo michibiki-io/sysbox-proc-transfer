@@ -29,9 +29,9 @@ def load_lock():
         raise ValueError("builder must be digest pinned")
     if lock["generator"] != "github.com/golang/protobuf/protoc-gen-go@v1.3.5":
         raise ValueError("legacy IPC generator required")
-    for name, digest in lock["baseline_sha256"].items():
+    for name, digest in lock["source_sha256"].items():
         if sha256(ROOT / name) != digest:
-            raise ValueError(f"baseline input changed: {name}")
+            raise ValueError(f"source integrity mismatch: {name}")
     return lock
 
 
@@ -62,8 +62,8 @@ def manifest(lock, output):
     architectures = {elf_architecture(output / name) for name in names}
     if len(architectures) != 1:
         raise ValueError("paired outputs have different architectures")
-    inputs = sorted(set(lock["baseline_sha256"]) |
-                    {"build/Dockerfile", "build/sources.lock.json", "scripts/build.py"})
+    inputs = sorted(set(lock["source_sha256"]) |
+                    {"build/Dockerfile", "build/sources.lock.json", "scripts/build.py", "tests/upstream/proc_policy_test.go"})
     return {"schema_version": 1, "architecture": architectures.pop(),
             "sources": lock["components"], "builder": lock["builder"],
             "generator": lock["generator"],

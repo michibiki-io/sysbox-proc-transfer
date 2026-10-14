@@ -2,8 +2,8 @@
 
 ## Contents / 目次
 
-- [English](#english): [Validated baseline](#validated-baseline), [Verification boundaries](#verification-boundaries)
-- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [検証範囲](#検証範囲)
+- [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries)
+- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲)
 
 ## English
 
@@ -18,9 +18,13 @@ bwrap --die-with-parent --unshare-all --share-net \
 
 The prior baseline also passed recursive read-only proc checks, preserved `/sys` tree bind checks and 500 mounts with eight workers plus concurrent nsenter/FUSE reaping. `/sys` coverage concerns a bound existing tree only. It is not evidence for a nested sysfs mount implementation.
 
-The common build and portable runtime tests were also completed for this repository packaging in an **arm64 environment** with the same kernel and runtime baseline. Both generated binary SHA-256 values matched the validated binary pair: `sysbox-fs` = `bee88e0d87c0b6978fc19542952064b574aae63ab1f372ed687da7355eba419b`, `proc-mount-helper` = `2c81e159530dd30c994e9dcb12be2939d318b22d44e5470a1b896edf9d90efa6`. This is an observed match for this build, not a guarantee of byte-identical future builds.
+Before the review correction below, the common build and portable runtime tests were also completed for this repository packaging in an **arm64 environment** with the same kernel and runtime baseline. Both generated binary SHA-256 values matched the validated binary pair: `sysbox-fs` = `bee88e0d87c0b6978fc19542952064b574aae63ab1f372ed687da7355eba419b`, `proc-mount-helper` = `2c81e159530dd30c994e9dcb12be2939d318b22d44e5470a1b896edf9d90efa6`. This is an observed match for this build, not a guarantee of byte-identical future builds.
 
 The unchanged non-root command, PID identity, seccomp, protection inode/read-only retention, masks, detach denial, recursive read-only procfs and preserved `/sys` tree checks passed. The concurrent 500-mount stress check passed. The existing helper rejection harness is included as `tests/runtime/helper-rejections.py`, with runtime-specific execution supplied by the operator. Wrong Mount namespace ownership, a dead requester, unsupported flags and a mapped-user launcher were rejected; live failed requests left the target unchanged. The harness was exercised against the same binary pair in the arm64 environment. Private host identities and raw operational logs are intentionally not part of the public validation record.
+
+### Review correction validation
+
+The final patch moves nested dispatch after the existing `createProcPayload` read-only policy normalization. A focused upstream-package regression test covers inherited read-only, read-write, explicit read-only and missing proc metadata cases through the real dispatcher without launching the helper. The corrected daemon builds and this regression test passes in an arm64 builder. The C helper and its prior runtime validation remain unchanged. Full container runtime tests were not rerun with the corrected daemon, and it was not installed into a running host; the initial runtime binary hash above is historical, not the final daemon hash.
 
 ### Verification boundaries
 
@@ -44,7 +48,7 @@ bwrap --die-with-parent --unshare-all --share-net \
 `/sys` は既存 tree の bind のみを検査しています。
 nested sysfs mount 実装の検証結果ではありません。
 
-今回のリポジトリ構成についても、同じ kernel/runtime 条件の **arm64 環境でビルドと実行時検証を完了しました**。
+後述のレビュー修正前のリポジトリ構成についても、同じ kernel/runtime 条件の **arm64 環境でビルドと実行時検証を完了しました**。
 生成した二つの binary の SHA-256 は、検証済みの binary と一致しました。
 `sysbox-fs` は `bee88e0d87c0b6978fc19542952064b574aae63ab1f372ed687da7355eba419b`、`proc-mount-helper` は `2c81e159530dd30c994e9dcb12be2939d318b22d44e5470a1b896edf9d90efa6` です。
 今回観測した一致であり、将来の全ビルドの byte 一致を保証するものではありません。
@@ -55,6 +59,16 @@ nested sysfs mount 実装の検証結果ではありません。
 同じ binary を使った arm64 検証で、誤った Mount namespace owner、終了した requester、未対応 flag、mapped User namespace からの launcher が拒否されました。
 生存する requester の拒否ケースでは target が変更されないことも確認しました。
 公開の検証記録にホスト識別情報や実機の生ログは含めません。
+
+### レビュー修正の検証
+
+最終 patch は nested 分岐を、既存の `createProcPayload` の read-only policy 判定より後に移動します。
+upstream package の対象を絞った regression test で、継承する read-only、read-write、明示的 read-only、proc metadata がない場合を、実際の dispatcher を通して確認します。
+この検査では helper を起動しません。
+arm64 builder で修正した daemon のビルドと regression test が成功しました。
+C helper と、その実行時検証結果は変わりません。
+修正した daemon を稼働中ホストへ導入して container runtime 検査を再実行することはしていません。
+上記の初期 runtime binary hash は過去の記録であり、最終 daemon の hash ではありません。
 
 ### 検証範囲
 

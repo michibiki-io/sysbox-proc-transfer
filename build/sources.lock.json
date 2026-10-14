@@ -25,9 +25,9 @@
   },
   "builder": "golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e",
   "generator": "github.com/golang/protobuf/protoc-gen-go@v1.3.5",
-  "baseline_sha256": {
+  "source_sha256": {
     "helper/proc-mount-helper.c": "a91a1926dd072ff8a97cd1e7ac01a307a95ca0bf0f79d9c9dfff59b5ced23498",
-    "patches/proc-transfer.patch": "cdd49d5411e7276d65b6c551a1493051c86b7224efa3c4456218f9320d6a5cb2",
+    "patches/proc-transfer.patch": "856d411a1461443636ac21922a0d9e471a2189ca1f0c76b8b54f4f3d9261bae1",
     "tests/runtime/verify.c": "b4b3185d608fd762c1d82c8e73889eb2e3d131eab46ed943ea8bfd58e8329190",
     "tests/runtime/verify-sys.py": "896c115941a61389cfc8aee0103d5e1b6b133372811237c081bd645a7832295b"
   }

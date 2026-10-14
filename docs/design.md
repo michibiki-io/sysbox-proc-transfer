@@ -11,6 +11,8 @@
 
 The patch selects a mapped identity for namespace entry when a nested user namespace omits UID/GID zero. It changes the nsexec C code linked into `sysbox-fs`, without requiring a replacement standalone runtime or manager. The nested proc path is enabled by `SYSBOX_PROC_TRANSFER_HELPER`. Requests in the registered outer user namespace continue through the original path.
 
+The existing `createProcPayload` policy normalization runs before the nested branch, so a read-only `/proc` superblock adds `MS_RDONLY` to the same mount payload passed to the helper.
+
 For an eligible nested request, `sysbox-fs` authenticates capabilities and credentials against the registered container, pins namespaces, target directory, outer root and requester pidfd, and supplies registered protection sources. The C worker enters the mapped outer User namespace as mapped root, then the outer Mount namespace and container root. All mounting uses mapped-user privileges. It remains in the ancestor host PID namespace, invisible in the sandbox procfs, and selects the sandbox PID namespace via procfs `pidns` FD configuration.
 
 A private staging Mount namespace and bounded tmpfs hold a new proc tree. Registered protected mounts are cloned from the outer container, attached and checked for source identity/read-only retention. A sacrificial child User/Mount namespace locks the submounts and transfers a detached tree back to the worker. The worker reaps the child, discards staging, checks requester liveness and enters the target Mount namespace. The final `move_mount` attaches the locked tree to the pinned target. Earlier failures leave the target unchanged.
@@ -44,6 +46,9 @@ patch は nested User namespace に UID/GID zero がない場合、namespace ent
 単体 runtime や manager の置き換えは不要です。
 nested proc 処理は `SYSBOX_PROC_TRANSFER_HELPER` で有効にします。
 登録済みの外側 User namespace の request は従来の処理を使います。
+
+既存の `createProcPayload` の policy 判定を nested 分岐より先に実行します。
+`/proc` superblock が read-only の場合は、helper に渡す同じ mount payload の flag に `MS_RDONLY` が追加されます。
 
 対象となる nested request では、`sysbox-fs` が capability と credential を登録済みコンテナに照合します。
 namespace、target directory、outer root、requester pidfd を固定し、登録済みの保護 source を渡します。

@@ -10,7 +10,7 @@
 
 ## English
 
-This repository packages the validated Sysbox v0.7.1 patch and C helper that let an unchanged, unprivileged-user bubblewrap `--proc /proc` invocation create procfs for its sandbox PID namespace. The implementation preserves registered procfs protections and User/PID/Mount isolation. Its validated baseline is arm64, Linux 7.1, Sysbox 0.7.1 and bubblewrap 0.9.0. Packaging does not broaden runtime support or constitute a full security audit.
+This repository packages the validated Sysbox v0.7.1 patch and C helper that let an unchanged, unprivileged-user bubblewrap `--proc /proc` invocation create procfs for its sandbox PID namespace. A review correction applies the existing outer procfs read-only normalization before nested dispatch; other validated transfer behavior is retained. The implementation preserves registered procfs protections and User/PID/Mount isolation. Its validated baseline is arm64, Linux 7.1, Sysbox 0.7.1 and bubblewrap 0.9.0. Packaging does not broaden runtime support or constitute a full security audit.
 
 ### Build
 
@@ -24,7 +24,7 @@ python3 scripts/build.py --platform linux/arm64 --output dist
 
 The default is a native build. `dist/` receives `sysbox-fs`, `proc-mount-helper` and `manifest.json` using BuildKit local output from a scratch stage. The manifest records the output ELF architecture, component revisions, builder digest, generator version and input/output SHA-256 hashes without machine identities or local paths. Treat the two binaries as a matched pair. Set `SYSBOX_PROC_TRANSFER_HELPER` in the `sysbox-fs` process environment to the trusted helper executable's absolute path; an unset variable leaves the original proc mount path active. Protect both executables and that environment from container callers. Host deployment configuration is outside this repository.
 
-[build/sources.lock.json](build/sources.lock.json) is the authoritative pin source. The wrapper supplies its values as Docker build arguments, checks unchanged baseline input hashes, and the builder checks root/component commits after recursive submodule initialization. IPC protobuf generation with `protoc-gen-go` v1.3.5 runs before building `sysbox-fs`. The patch retains upstream component paths and is applied at the Sysbox root. The namespace-entry C code is linked into `sysbox-fs`; standalone `sysbox-runc` and `sysbox-mgr` need no replacement for this patch.
+[build/sources.lock.json](build/sources.lock.json) is the authoritative pin source. The wrapper supplies its values as Docker build arguments, checks source integrity hashes, and the builder checks root/component commits after recursive submodule initialization. IPC protobuf generation with `protoc-gen-go` v1.3.5 runs before building `sysbox-fs`. A focused upstream-package regression test verifies read-only policy normalization before nested dispatch without executing a helper or changing mounts. The patch retains upstream component paths and is applied at the Sysbox root. The namespace-entry C code is linked into `sysbox-fs`; standalone `sysbox-runc` and `sysbox-mgr` need no replacement for this patch.
 
 Pinned inputs and recorded hashes do not establish byte-identical rebuilds. Builder apt repositories and upstream Go module availability remain external dependencies. A successful build on another architecture is compilation evidence only, not runtime validation. This issue publishes source, not binaries.
 
@@ -69,6 +69,8 @@ Original helper, validation, build tooling and documentation use the root [MIT l
 一般ユーザーの bubblewrap 呼び出しを変更せず、`--proc /proc` で sandbox 自身の PID namespace に対応する procfs を作成します。
 登録済みの procfs 保護と User/PID/Mount namespace の隔離を維持します。
 検証済みの基準環境は arm64、Linux 7.1、Sysbox 0.7.1、bubblewrap 0.9.0 です。
+レビューで判明した read-only 継承の抜けを修正し、既存の判定を nested 転送前に適用します。
+その他の検証済み処理は維持しています。
 今回の整理は動作対応の拡大や完全な安全性監査を意味しません。
 
 ### ビルド
@@ -93,9 +95,10 @@ manifest は ELF architecture、component revision、builder digest、generator 
 ホストの導入設定は本リポジトリの対象外です。
 
 固定値の正本は [build/sources.lock.json](build/sources.lock.json) です。
-wrapper は固定値を Docker build argument に渡し、基準 input の hash が変わっていないことを確認します。
+wrapper は固定値を Docker build argument に渡し、source integrity hash を確認します。
 builder は再帰的な submodule 初期化後に root と component の commit を確認します。
 `protoc-gen-go` v1.3.5 による IPC protobuf 生成を `sysbox-fs` のビルドより先に実行します。
+upstream package 内の対象を絞った regression test で、helper の実行や mount 変更なしに nested 分岐前の read-only 継承を確認します。
 patch の upstream component path は保持し、Sysbox root で適用します。
 namespace-entry の C コードは `sysbox-fs` にリンクされるため、この patch のために単体の `sysbox-runc` や `sysbox-mgr` を置き換える必要はありません。
 

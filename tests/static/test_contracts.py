@@ -19,14 +19,14 @@ PUBLIC_FILES = {
     "helper/proc-mount-helper.c", "patches/proc-transfer.patch",
     "build/Dockerfile", "build/sources.lock.json", "scripts/build.py",
     "tests/runtime/verify.c", "tests/runtime/verify-sys.py", "tests/runtime/verify.sh",
-    "tests/runtime/stress-proc.py", "tests/runtime/helper-rejections.py", "tests/static/test_contracts.py",
-    ".gitignore", ".dockerignore", ".github/workflows/test.yml",
+    "tests/runtime/stress-proc.py", "tests/runtime/helper-rejections.py", "tests/upstream/proc_policy_test.go", "tests/static/test_contracts.py",
+    ".gitignore", ".gitattributes", ".dockerignore", ".github/workflows/test.yml",
 }
 
 
 class Contracts(unittest.TestCase):
     def test_baseline_and_build_pins(self):
-        lock = build.load_lock()  # Validates immutable baseline hashes, digest and revisions.
+        lock = build.load_lock()  # Validates immutable source hashes, digest and revisions.
         dockerfile = (ROOT / "build/Dockerfile").read_text()
         command = build.build_command(lock, Path("artifacts"))
         args = dict(command[i + 1].split("=", 1) for i, value in enumerate(command)
@@ -103,11 +103,11 @@ class Contracts(unittest.TestCase):
         included = {rule[1:] for rule in rules[1:] if rule.startswith("!")}
         copied = set(re.findall(r"^COPY (?!\-\-)(\S+) ",
                                 (ROOT / "build/Dockerfile").read_text(), re.M))
-        self.assertEqual(copied, {"helper/proc-mount-helper.c", "patches/proc-transfer.patch"})
-        expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/"}
+        self.assertEqual(copied, {"helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go"})
+        expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/", "tests/", "tests/upstream/"}
         self.assertEqual(included, expected)
         self.assertTrue(all(not any(c in rule for c in "*?") for rule in included))
-        # Documents, tests, git metadata and output cannot enter the compilation context.
+        # Runtime diagnostics, documents, git metadata and outputs cannot enter the build context.
 
     def test_script_syntax(self):
         subprocess.run(["bash", "-n", str(ROOT / "tests/runtime/verify.sh")], check=True)

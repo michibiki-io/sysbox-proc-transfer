@@ -87,16 +87,15 @@ diff --git a/sysbox-fs/seccomp/mount.go b/sysbox-fs/seccomp/mount.go
 index 7b56220..08eee7c 100644
 --- a/sysbox-fs/seccomp/mount.go
 +++ b/sysbox-fs/seccomp/mount.go
-@@ -157,6 +157,9 @@ func (m *mountSyscallInfo) processProcMount(
- 	mip domain.MountInfoParserIface) (*sysResponse, error) {
- 
- 	logrus.Debugf("Processing new procfs mount: %v", m)
+@@ -163,5 +163,8 @@ func (m *mountSyscallInfo) processProcMount(
+ 		return nil, fmt.Errorf("Could not construct procMount payload")
+ 	}
 +	if response, handled, err := m.processNestedProcMount(); handled {
 +		return response, err
 +	}
  
- 	// Create instructions payload.
- 	payload := m.createProcPayload(mip)
+ 	// Create nsenter-event envelope.
+ 	nss := m.tracer.service.nss
 diff --git a/sysbox-fs/seccomp/proc_transfer.go b/sysbox-fs/seccomp/proc_transfer.go
 new file mode 100644
 index 0000000..a8dc582

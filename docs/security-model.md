@@ -17,7 +17,7 @@ The worker clears inherited supplementary groups, enters the mapped outer User n
 
 ### Protection and limits
 
-Registered proc mounts, read-only paths and masked paths are deduplicated and cloned recursively. Missing registered source paths are skipped; malformed paths and a request with no available protection sources are rejected. The worker compares device/inode identity and read-only retention, locks protected submounts through a child User namespace, and performs final attachment only after successful staging and child reaping. Read-only requests apply recursive read-only attributes.
+Registered proc mounts, read-only paths and masked paths are deduplicated and cloned recursively. Missing registered source paths are skipped; malformed paths and a request with no available protection sources are rejected. The worker compares device/inode identity and read-only retention, locks protected submounts through a child User namespace, and performs final attachment only after successful staging and child reaping. Read-only requests, including inherited outer procfs superblock policy normalized before dispatch, apply recursive read-only attributes.
 
 The implemented flag whitelist is `MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME | MS_STRICTATIME | MS_SILENT | MS_LAZYTIME`. Unknown bits are rejected. New proc mounts always receive nosuid/nodev/noexec attributes. Whitelist membership does not imply that every combination succeeds: `MS_STRICTATIME` fails on the validated baseline. Proc root ownership is deliberately not rewritten with initial-user capabilities; a single-UID sandbox can see the overflow UID while process entries retain mapped ownership.
 
@@ -51,7 +51,7 @@ sandbox の User/PID/Mount 隔離と seccomp filtering は維持します。
 不正な path と、利用できる保護 source が一つもない request は拒否します。
 worker は device/inode と read-only の維持を照合し、child User namespace で保護 submount を lock します。
 staging と child reaping が成功してから最終取り付けを行います。
-read-only request では属性を再帰的に適用します。
+分岐前に継承した外側 procfs superblock の read-only policy を含め、read-only request では属性を再帰的に適用します。
 
 実装の flag whitelist は `MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RELATIME | MS_STRICTATIME | MS_SILENT | MS_LAZYTIME` です。
 未知の bit は拒否し、新しい proc mount には常に nosuid/nodev/noexec 属性を付けます。

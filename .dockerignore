@@ -5,3 +5,6 @@
 !patches/proc-transfer.patch
 !helper/
 !helper/proc-mount-helper.c
+!tests/
+!tests/upstream/
+!tests/upstream/proc_policy_test.go
