@@ -1,0 +1,330 @@
+diff --git a/sysbox-fs/nsenter/event.go b/sysbox-fs/nsenter/event.go
+index e7481a5..28dc6c6 100644
+--- a/sysbox-fs/nsenter/event.go
++++ b/sysbox-fs/nsenter/event.go
+@@ -612,15 +612,55 @@ func (e *NSenterEvent) SendRequest() error {
+ 	})
+ 
+ 	// Prepare exec.cmd in charge of running: "sysbox-fs nsenter".
++	helperEnv := []string{"_LIBCONTAINER_INITPIPE=3", fmt.Sprintf("GOMAXPROCS=%s", os.Getenv("GOMAXPROCS"))}
++	for _, namespace := range *e.Namespace {
++		if namespace != "user" {
++			continue
++		}
++		mappedID := func(kind string) (uint64, error) {
++			data, err := os.ReadFile(fmt.Sprintf("/proc/%d/%s_map", e.Pid, kind))
++			if err != nil {
++				return 0, err
++			}
++			var chosen uint64
++			found := false
++			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
++				var inside, outside, size uint64
++				if _, err := fmt.Sscanf(line, "%d %d %d", &inside, &outside, &size); err != nil || size == 0 || inside >= 4294967295 {
++					return 0, fmt.Errorf("invalid %s mapping", kind)
++				}
++				if !found {
++					chosen = inside
++					found = true
++				}
++				if inside == 0 {
++					return 0, nil
++				}
++			}
++			if !found {
++				return 0, fmt.Errorf("empty %s mapping", kind)
++			}
++			return chosen, nil
++		}
++		uid, uidErr := mappedID("uid")
++		gid, gidErr := mappedID("gid")
++		if uidErr != nil || gidErr != nil {
++			return fmt.Errorf("cannot read target nsenter identity maps: uid=%v gid=%v", uidErr, gidErr)
++		}
++		if uid != 0 || gid != 0 {
++			helperEnv = append(helperEnv, fmt.Sprintf("_SYSBOX_NSENTER_UID=%d", uid), fmt.Sprintf("_SYSBOX_NSENTER_GID=%d", gid))
++		}
++		break
++	}
+ 	cmd := &exec.Cmd{
+ 		Path:        "/proc/self/exe",
+ 		Args:        []string{os.Args[0], "nsenter"},
+ 		ExtraFiles:  []*os.File{childPipe},
+-		Env:         []string{"_LIBCONTAINER_INITPIPE=3", fmt.Sprintf("GOMAXPROCS=%s", os.Getenv("GOMAXPROCS"))},
++		Env:         helperEnv,
+ 		SysProcAttr: &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM},
+ 		Stdin:       nil,
+ 		Stdout:      nil,
+-		Stderr:      nil,
++		Stderr:      os.Stderr,
+ 	}
+ 
+ 	// Launch sysbox-fs' first child process.
+diff --git a/sysbox-fs/nsenter/eventService.go b/sysbox-fs/nsenter/eventService.go
+index 1ca3ac1..a56c624 100644
+--- a/sysbox-fs/nsenter/eventService.go
++++ b/sysbox-fs/nsenter/eventService.go
+@@ -26,6 +26,18 @@ type nsenterService struct {
+ 	reaper *zombieReaper
+ }
+ 
++// WithChildReaperGuard reserves synchronous children for their own waiters.
++// The global Wait4(-1) sweep must not steal an exec.Cmd child's exit status.
++// RLock permits the helper's FUSE requests to start ordinary nsenters.
++func (s *nsenterService) WithChildReaperGuard(run func() error) error {
++	s.reaper.nsenterStarted()
++	defer func() {
++		s.reaper.nsenterEnded()
++		s.reaper.nsenterReapReq()
++	}()
++	return run()
++}
++
+ func NewNSenterService() domain.NSenterServiceIface {
+ 	return &nsenterService{
+ 		reaper: newZombieReaper(),
+diff --git a/sysbox-fs/seccomp/mount.go b/sysbox-fs/seccomp/mount.go
+index 7b56220..08eee7c 100644
+--- a/sysbox-fs/seccomp/mount.go
++++ b/sysbox-fs/seccomp/mount.go
+@@ -163,5 +163,8 @@ func (m *mountSyscallInfo) processProcMount(
+ 		return nil, fmt.Errorf("Could not construct procMount payload")
+ 	}
++	if response, handled, err := m.processNestedProcMount(); handled {
++		return response, err
++	}
+ 
+ 	// Create nsenter-event envelope.
+ 	nss := m.tracer.service.nss
+diff --git a/sysbox-fs/seccomp/proc_transfer.go b/sysbox-fs/seccomp/proc_transfer.go
+new file mode 100644
+index 0000000..a8dc582
+--- /dev/null
++++ b/sysbox-fs/seccomp/proc_transfer.go
+@@ -0,0 +1,160 @@
++package seccomp
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"syscall"
++	"time"
++
++	"github.com/sirupsen/logrus"
++	"golang.org/x/sys/unix"
++)
++
++// Nested proc mounts are built in the registered container's mapped user
++// namespace, then transferred with all protected submounts kernel-locked.
++// This path does not change the container's seccomp profile.
++func (m *mountSyscallInfo) processNestedProcMount() (*sysResponse, bool, error) {
++	helper := os.Getenv("SYSBOX_PROC_TRANSFER_HELPER")
++	if helper == "" {
++		return nil, false, nil
++	}
++	outer, err := m.cntr.InitProc().UserNsInode()
++	if err != nil {
++		return nil, true, err
++	}
++	user, err := m.processInfo.UserNsInode()
++	if err != nil {
++		return nil, true, err
++	}
++	if outer == user {
++		return nil, false, nil
++	}
++	reject := func(e syscall.Errno) (*sysResponse, bool, error) {
++		return m.tracer.createErrorResponse(m.reqId, e), true, nil
++	}
++	if m.root != "/" || m.Data != "" || !filepath.IsAbs(m.Target) {
++		return reject(syscall.ENOTSUP)
++	}
++	if !m.processInfo.IsSysAdminCapabilitySet() {
++		return reject(syscall.EPERM)
++	}
++	if m.uid < m.cntr.UID() || m.uid-m.cntr.UID() >= m.cntr.UidSize() || m.gid < m.cntr.GID() || m.gid-m.cntr.GID() >= m.cntr.GidSize() {
++		return reject(syscall.EPERM)
++	}
++	if m.cntr.IsImmutableMountpoint(m.Target) || m.cntr.IsImmutableOverlapMountpoint(m.Target) {
++		return reject(syscall.EPERM)
++	}
++	var files []*os.File
++	defer func() {
++		for _, f := range files {
++			f.Close()
++		}
++	}()
++	add := func(path string, flags int) error {
++		fd, e := unix.Open(path, flags|unix.O_CLOEXEC, 0)
++		if e != nil {
++			return e
++		}
++		files = append(files, os.NewFile(uintptr(fd), path))
++		return nil
++	}
++	outerBase := fmt.Sprintf("/proc/%d", m.cntr.InitPid())
++	targetBase := fmt.Sprintf("/proc/%d", m.pid)
++	// Absolute symlinks must resolve within the relevant container root,
++	// rather than against the daemon's host root.
++	outerRoot, err := unix.Open(outerBase+"/root", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return nil, true, err
++	}
++	defer unix.Close(outerRoot)
++	targetRoot, err := unix.Open(targetBase+"/root", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return nil, true, err
++	}
++	defer unix.Close(targetRoot)
++	addRooted := func(root int, path string, flags int) error {
++		fd, e := unix.Openat2(root, path, &unix.OpenHow{
++			Flags:   uint64(flags | unix.O_CLOEXEC),
++			Resolve: unix.RESOLVE_IN_ROOT | unix.RESOLVE_NO_MAGICLINKS,
++		})
++		if e != nil {
++			return e
++		}
++		files = append(files, os.NewFile(uintptr(fd), path))
++		return nil
++	}
++	paths := []string{outerBase + "/ns/user", outerBase + "/ns/mnt", targetBase + "/ns/user", targetBase + "/ns/mnt", targetBase + "/ns/pid"}
++	for _, p := range paths {
++		if err := add(p, unix.O_RDONLY); err != nil {
++			return nil, true, err
++		}
++	}
++	if err := addRooted(targetRoot, m.Target, unix.O_PATH|unix.O_DIRECTORY); err != nil {
++		return nil, true, err
++	}
++	if err := addRooted(outerRoot, "/", unix.O_PATH|unix.O_DIRECTORY); err != nil {
++		return nil, true, err
++	}
++	pfd, err := unix.PidfdOpen(int(m.pid), 0)
++	if err != nil {
++		return nil, true, err
++	}
++	files = append(files, os.NewFile(uintptr(pfd), "requester pidfd"))
++	args := []string{strconv.FormatUint(uint64(m.uid-m.cntr.UID()), 10), strconv.FormatUint(uint64(m.gid-m.cntr.GID()), 10), strconv.FormatUint(m.Flags, 10)}
++	protected := append([]string{}, m.tracer.service.mts.MountHelper().ProcMounts()...)
++	protected = append(protected, m.cntr.ProcRoPaths()...)
++	protected = append(protected, m.cntr.ProcMaskPaths()...)
++	seen := map[string]bool{}
++	for _, p := range protected {
++		if !strings.HasPrefix(p, "/proc/") || filepath.Clean(p) != p {
++			return reject(syscall.EINVAL)
++		}
++		if seen[p] {
++			continue
++		}
++		seen[p] = true
++		// Sources belong to the registered outer container, never an untrusted
++		// caller's possibly overmounted view of /proc.
++		err := addRooted(outerRoot, p, unix.O_PATH)
++		if err == syscall.ENOENT {
++			continue
++		}
++		if err != nil {
++			return nil, true, err
++		}
++		args = append(args, strings.TrimPrefix(p, "/proc/"))
++	}
++	if len(args) == 3 {
++		return reject(syscall.EPERM)
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
++	defer cancel()
++	cmd := exec.CommandContext(ctx, helper, args...)
++	cmd.ExtraFiles = files
++	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
++	guard, ok := m.tracer.service.nss.(interface {
++		WithChildReaperGuard(func() error) error
++	})
++	if !ok {
++		return reject(syscall.ENOTSUP)
++	}
++	var output []byte
++	err = guard.WithChildReaperGuard(func() error {
++		var waitErr error
++		output, waitErr = cmd.CombinedOutput()
++		return waitErr
++	})
++	if err != nil {
++		logrus.Warnf("protected proc transfer failed pid=%d: %s: %v", m.pid, output, err)
++		if e, ok := err.(*exec.ExitError); ok && e.ExitCode() > 0 && e.ExitCode() < 256 {
++			return reject(syscall.Errno(e.ExitCode()))
++		}
++		return reject(syscall.EIO)
++	}
++	return m.tracer.createSuccessResponse(m.reqId), true, nil
++}
+diff --git a/sysbox-fs/seccomp/tracer.go b/sysbox-fs/seccomp/tracer.go
+index 7781d7b..c952f2a 100644
+--- a/sysbox-fs/seccomp/tracer.go
++++ b/sysbox-fs/seccomp/tracer.go
+@@ -423,19 +423,26 @@ func (t *syscallTracer) connHandler(c *net.UnixConn) {
+ 
+ 		// As per pidfd_open(2), a pidfd becomes readable when its associated pid
+ 		// terminates. Exit the polling loop when this occurs.
+-		if !t.seccompUnusedNotif && fds[1].Revents == unix.POLLIN {
++		if !t.seccompUnusedNotif && fds[1].Revents&unix.POLLIN != 0 {
+ 			logrus.Debugf("POLLIN event received on pidfd %d, pid %d, cntr %s",
+ 				pidfd, pid, formatter.ContainerID{cntrID})
+ 			break
+ 		}
+ 
+-		// Exit the polling loop whenever the received event on the seccomp-fd is not
+-		// the expected one.
+-		if fds[0].Revents != unix.POLLIN {
++		// seccomp_notify_poll() returns POLLERR if a signal interrupts its
++		// notify_lock acquisition. This is transient (e.g. Go SIGURG), not
++		// evidence that the filter has no users. Closing its listener here
++		// makes every later intercepted syscall fail with ENOSYS.
++		// HUP without pending readable notifications and NVAL are terminal.
++		if fds[0].Revents&unix.POLLNVAL != 0 ||
++			(fds[0].Revents&unix.POLLHUP != 0 && fds[0].Revents&unix.POLLIN == 0) {
+ 			logrus.Debugf("Non-POLLIN event received on fd %d, pid %d, cntr %s",
+ 				fd, pid, formatter.ContainerID{cntrID})
+ 			break
+ 		}
++		if fds[0].Revents&unix.POLLIN == 0 {
++			continue
++		}
+ 
+ 		// Retrieves seccomp-notification message. Notice that we will not 'break'
+ 		// upon error detection as libseccomp/kernel could return non-fatal errors
+diff --git a/sysbox-runc/libcontainer/nsenter/nsexec.c b/sysbox-runc/libcontainer/nsenter/nsexec.c
+index 1b1b1b51..335f58c6 100644
+--- a/sysbox-runc/libcontainer/nsenter/nsexec.c
++++ b/sysbox-runc/libcontainer/nsenter/nsexec.c
+@@ -1236,10 +1236,24 @@ void nsexec(void)
+ 			if (setsid() < 0)
+ 				bail("setsid failed");
+ 
+-			if (setuid(0) < 0)
++			/* Sysbox-fs enters pre-existing user namespaces which may have
++			 * no UID/GID 0 mapping. Its trusted launcher passes kernel-derived
++			 * mapped identities. Ordinary runc callers retain UID/GID 0. */
++			unsigned long helper_uid = 0, helper_gid = 0;
++			const char *uid_env = getenv("_SYSBOX_NSENTER_UID");
++			const char *gid_env = getenv("_SYSBOX_NSENTER_GID");
++			if (uid_env || gid_env) {
++				char *end;
++				if (!uid_env || !gid_env) bail("incomplete Sysbox nsenter identity");
++				errno = 0; helper_uid = strtoul(uid_env, &end, 10);
++				if (errno || !*uid_env || *end || helper_uid >= UINT32_MAX) bail("invalid Sysbox nsenter uid");
++				errno = 0; helper_gid = strtoul(gid_env, &end, 10);
++				if (errno || !*gid_env || *end || helper_gid >= UINT32_MAX) bail("invalid Sysbox nsenter gid");
++			}
++			if (setuid((uid_t)helper_uid) < 0)
+ 				bail("setuid failed");
+ 
+-			if (setgid(0) < 0)
++			if (setgid((gid_t)helper_gid) < 0)
+ 				bail("setgid failed");
+ 
+ 			if (!config.is_rootless_euid && config.is_setgroup) {

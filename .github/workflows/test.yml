@@ -1,0 +1,19 @@
+name: Test
+on:
+  pull_request:
+  push:
+    branches: [main, 'feature/**']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Focused static and compilation checks
+        run: python3 -m unittest discover -s tests/static -v
+      - name: Build native paired artifacts from public inputs
+        run: python3 scripts/build.py

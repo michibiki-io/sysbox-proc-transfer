@@ -1,0 +1,7 @@
+/dist/
+__pycache__/
+*.py[cod]
+*.o
+*.log
+.env
+.env.*
