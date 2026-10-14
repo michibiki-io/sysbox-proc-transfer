@@ -24,7 +24,7 @@ The unchanged non-root command, PID identity, seccomp, protection inode/read-onl
 
 ### Verification boundaries
 
-Runtime requires the paired patched daemon and trusted helper, registered container UID/GID maps, a direct child User namespace owning the target Mount/PID namespaces, container root `/`, empty proc data and accepted mount flags. It requires procfs `pidns` FD configuration plus `openat2`, pidfds and the new mount APIs (`fsopen`, `fsconfig`, `fsmount`, `open_tree`, `move_mount`, `mount_setattr`). Other kernels and architectures remain unverified. `MS_STRICTATIME` is in the whitelist but fails on this baseline; no blanket flag compatibility is claimed.
+Runtime requires the paired patched daemon and trusted helper, registered container UID/GID maps, a direct child User namespace owning the target Mount/PID namespaces, container root `/`, empty proc data and accepted mount flags. It requires procfs `pidns` FD configuration plus `openat2`, pidfds and the new mount APIs (`fsopen`, `fsconfig`, `fsmount`, `open_tree`, `move_mount`, `mount_setattr`). Other kernels and architectures remain unverified. The unchanged implementation opens the notifying PID/TID with `pidfd_open(..., 0)`; non-thread-group-leader requesters are not supported by this path. The validated bubblewrap mount is issued by a leader process. Thread-pidfd support is not added by this packaging issue. `MS_STRICTATIME` is in the whitelist but fails on this baseline; no blanket flag compatibility is claimed.
 
 The portable runtime runner requires independently supplied host PID/User namespace identifiers and runs as the caller inside a provisioned Sysbox container. A C compiler, Python 3 and bubblewrap must already be installed. It does not configure the host or provision containers. Local static/compilation checks and CI native builds verify packaging contracts, not the runtime baseline. Explicit `--platform` compilation depends on builder support and does not extend runtime support. This repository makes no byte-identical rebuild or full security audit claim.
 
@@ -61,6 +61,9 @@ nested sysfs mount 実装の検証結果ではありません。
 実行時には patched daemon と信頼された helper の対、登録済み UID/GID map、target Mount/PID namespace を所有する直接の child User namespace、container root `/`、空の proc data、受理される mount flag が必要です。
 procfs の `pidns` FD 設定に加え、`openat2`、pidfd、新しい mount API（`fsopen`、`fsconfig`、`fsmount`、`open_tree`、`move_mount`、`mount_setattr`）を使います。
 他の kernel と architecture は未検証です。
+変更していない実装は通知元 PID/TID に `pidfd_open(..., 0)` を使うため、thread group leader 以外からの request はこの経路では対応しません。
+検証済みの bubblewrap mount は leader process から実行されます。
+今回の整理では thread pidfd 対応を追加しません。
 `MS_STRICTATIME` は whitelist に含まれますが、基準環境では失敗します。
 全 flag の互換性を主張しません。
 
