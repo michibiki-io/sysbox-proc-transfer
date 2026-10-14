@@ -1,0 +1,7 @@
+**
+!build/
+!build/Dockerfile
+!patches/
+!patches/proc-transfer.patch
+!helper/
+!helper/proc-mount-helper.c

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "upstream_tag": "v0.7.1",
+  "components": {
+    "root": {
+      "repository": "https://github.com/nestybox/sysbox.git",
+      "revision": "82881aaaf2ce22ad0ff81487f458162908cb933f"
+    },
+    "fs": {
+      "repository": "https://github.com/nestybox/sysbox-fs.git",
+      "revision": "c3d2ebc65102e32e74e383675f03b45556326888"
+    },
+    "runc": {
+      "repository": "https://github.com/nestybox/sysbox-runc.git",
+      "revision": "081856cc5d17e7095f066b08d0eca6bb0b515c47"
+    },
+    "ipc": {
+      "repository": "https://github.com/nestybox/sysbox-ipc.git",
+      "revision": "f05151f4b4c1df63d7fd241577ca032905c1bd0e"
+    },
+    "libs": {
+      "repository": "https://github.com/nestybox/sysbox-libs.git",
+      "revision": "cacac19395528afa42b467a980b05d8d1c6d646c"
+    }
+  },
+  "builder": "golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e",
+  "generator": "github.com/golang/protobuf/protoc-gen-go@v1.3.5",
+  "baseline_sha256": {
+    "helper/proc-mount-helper.c": "a91a1926dd072ff8a97cd1e7ac01a307a95ca0bf0f79d9c9dfff59b5ced23498",
+    "patches/proc-transfer.patch": "cdd49d5411e7276d65b6c551a1493051c86b7224efa3c4456218f9320d6a5cb2",
+    "tests/runtime/verify.c": "b4b3185d608fd762c1d82c8e73889eb2e3d131eab46ed943ea8bfd58e8329190",
+    "tests/runtime/verify-sys.py": "896c115941a61389cfc8aee0103d5e1b6b133372811237c081bd645a7832295b"
+  }
+}
