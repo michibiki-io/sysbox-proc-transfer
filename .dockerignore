@@ -8,3 +8,5 @@
 !tests/
 !tests/upstream/
 !tests/upstream/proc_policy_test.go
+!tests/unit/
+!tests/unit/lifecycle.c

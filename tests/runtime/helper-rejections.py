@@ -59,7 +59,7 @@ try:
   fds.append(os.open(f'/proc/{pid}/ns/{n}',os.O_RDONLY))
  fds.append(os.open(f'/proc/{target}/root/tmp/proc-hidden',os.O_PATH|os.O_DIRECTORY))
  fds.append(os.open(f'/proc/{outer}/root',os.O_PATH|os.O_DIRECTORY))
- fds.append(os.pidfd_open(target))
+ fds.append(os.pidfd_open(target, 0x80))  # PIDFD_THREAD, matching production FD 10.
  names=[]
  for n in ['uptime','swaps','sys','bus','fs','irq','sysrq-trigger','asound','interrupts','keys','timer_list']:
   try:f=os.open(f'/proc/{outer}/root/proc/{n}',os.O_PATH)

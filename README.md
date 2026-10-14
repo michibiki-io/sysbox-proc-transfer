@@ -19,7 +19,7 @@
 
 ### Overview
 
-This repository packages the validated Sysbox v0.7.1 patch and C helper that let an unchanged, unprivileged-user bubblewrap `--proc /proc` invocation create procfs for its sandbox PID namespace. A review correction applies the existing outer procfs read-only normalization before nested dispatch; other validated transfer behavior is retained. The implementation preserves registered procfs protections and User/PID/Mount isolation. Its validated baseline is arm64, Linux 7.1, Sysbox 0.7.1 and bubblewrap 0.9.0. Packaging does not broaden runtime support or constitute a full security audit.
+This repository packages the validated Sysbox v0.7.1 patch and C helper that let an unchanged, unprivileged-user bubblewrap `--proc /proc` invocation create procfs for its sandbox PID namespace. A review correction applies the existing outer procfs read-only normalization before nested dispatch; other validated transfer behavior is retained. The implementation preserves registered procfs protections and User/PID/Mount isolation. Its validated baseline is arm64, Linux 7.1, Sysbox 0.7.1 and bubblewrap 0.9.0. Issue #3 implements nonleader thread requests using actual-TID thread pidfds and post-pinning notification validation. The updated pair passed arm64 runtime validation, including nonleader mounts and deterministic commit races; see [compatibility](docs/compatibility.md) for evidence and limits. This is not a full security audit.
 
 ### Build
 
@@ -66,6 +66,8 @@ python3 tests/runtime/helper-rejections.py \
 
 Other modes are `dead-requester`, `unsupported-flags`, and `mapped-launcher`. `OUTER_INIT_PID` must identify the registered outer container in the launcher's proc view. The script locates and kills only its uniquely tagged sandbox through a pinned pidfd; it does not use a supplied arbitrary target PID. Mount work inside the helper continues to use the mapped outer User namespace.
 
+The runner also checks nonleader TID != TGID mounts in distinct Mount namespaces, with an independent observer and all visible registered proc submounts. For deterministic exit/invalidation/exec race cases, compile and run the trusted test-only checkpoint harness described in [design](docs/design.md) and [runtime commands](tests/runtime/README.md). Thread pidfds require `PIDFD_THREAD`; unsupported acquisition returns the original errno and never falls back to a TGID or an unprotected mount.
+
 CI runs focused checks and a native container build from public inputs. It does not run the supported Sysbox runtime environment. See [compatibility](docs/compatibility.md) for the distinction between prior baseline results and checks performed on this packaging.
 
 ### Documentation
@@ -88,7 +90,10 @@ Original helper, validation, build tooling and documentation use the root [MIT l
 その他の検証済み処理は維持しています。
 登録済みの procfs 保護と User/PID/Mount 名前空間の隔離を維持します。
 検証済みの基準環境は arm64、Linux 7.1、Sysbox 0.7.1、bubblewrap 0.9.0 です。
-今回の整理は動作対応の拡大や完全な安全性監査を意味しません。
+Issue #3 は実際の TID の thread pidfd と FD 固定後の通知確認により、非 leader の要求に対応する処理を実装します。
+更新した対は arm64 の実行時検証で、非 leader の mount と決定的な commit の競合検査を通過しました。
+証跡と検証範囲は [動作条件](docs/compatibility.md) に記載します。
+完全な安全性監査を意味しません。
 
 ### ビルド
 
@@ -173,6 +178,11 @@ python3 tests/runtime/helper-rejections.py \
 検査は固有の識別子を付けた自身の sandbox だけを探索し、固定した pidfd で終了させます。
 終了対象として任意の PID を受け取ることはありません。
 helper の mount は引き続き、UID/GID をマッピングした外側の User 名前空間の権限で行います。
+
+runner は TID と TGID が異なる非 leader の mount を、異なる Mount namespace と独立した観測 process で確認し、見える登録済み proc submount をすべて検査します。
+終了、通知失効、exec の競合を決定的に検査する手順は [設計](docs/design.md) と [実行コマンド](tests/runtime/README.md) に記載します。
+thread pidfd には `PIDFD_THREAD` が必要で、未対応の場合は元の errno で拒否します。
+TGID への置き換えや保護のない mount への fallback はありません。
 
 CI は静的検査と、公開されている入力からのネイティブコンテナビルドを実行します。
 対応する Sysbox 環境での実行時検証は行いません。

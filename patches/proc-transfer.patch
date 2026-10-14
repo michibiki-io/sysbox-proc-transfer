@@ -98,10 +98,9 @@ index 7b56220..08eee7c 100644
  	nss := m.tracer.service.nss
 diff --git a/sysbox-fs/seccomp/proc_transfer.go b/sysbox-fs/seccomp/proc_transfer.go
 new file mode 100644
-index 0000000..a8dc582
 --- /dev/null
 +++ b/sysbox-fs/seccomp/proc_transfer.go
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,185 @@
 +package seccomp
 +
 +import (
@@ -115,9 +114,19 @@ index 0000000..a8dc582
 +	"syscall"
 +	"time"
 +
++	libseccomp "github.com/seccomp/libseccomp-golang"
 +	"github.com/sirupsen/logrus"
 +	"golang.org/x/sys/unix"
 +)
++
++// PIDFD_THREAD is O_EXCL in Linux UAPI (since 6.9). The pinned x/sys
++// version predates its name. Always use the notifying TID, including leaders;
++// never retry with flags 0 or substitute a TGID on unsupported kernels.
++const procPidfdThread = 0x80
++
++func openProcRequesterPidfd(tid int, open func(int, int) (int, error)) (int, error) {
++	return open(tid, procPidfdThread)
++}
 +
 +// Nested proc mounts are built in the registered container's mapped user
 +// namespace, then transferred with all protected submounts kernel-locked.
@@ -204,11 +213,15 @@ index 0000000..a8dc582
 +	if err := addRooted(outerRoot, "/", unix.O_PATH|unix.O_DIRECTORY); err != nil {
 +		return nil, true, err
 +	}
-+	pfd, err := unix.PidfdOpen(int(m.pid), 0)
++	pfd, err := openProcRequesterPidfd(int(m.pid), unix.PidfdOpen)
 +	if err != nil {
++		logrus.Warnf("proc-transfer: thread pidfd acquisition failed tid=%d (PIDFD_THREAD required): %v", m.pid, err)
++		if e, ok := err.(syscall.Errno); ok {
++			return reject(e)
++		}
 +		return nil, true, err
 +	}
-+	files = append(files, os.NewFile(uintptr(pfd), "requester pidfd"))
++	files = append(files, os.NewFile(uintptr(pfd), "requester thread pidfd"))
 +	args := []string{strconv.FormatUint(uint64(m.uid-m.cntr.UID()), 10), strconv.FormatUint(uint64(m.gid-m.cntr.GID()), 10), strconv.FormatUint(m.Flags, 10)}
 +	protected := append([]string{}, m.tracer.service.mts.MountHelper().ProcMounts()...)
 +	protected = append(protected, m.cntr.ProcRoPaths()...)
@@ -250,7 +263,7 @@ index 0000000..a8dc582
 +	var output []byte
 +	err = guard.WithChildReaperGuard(func() error {
 +		var waitErr error
-+		output, waitErr = cmd.CombinedOutput()
++		output, waitErr = runProcTransfer(m.notifyFd, m.reqId, cmd.CombinedOutput)
 +		return waitErr
 +	})
 +	if err != nil {
@@ -261,6 +274,17 @@ index 0000000..a8dc582
 +		return reject(syscall.EIO)
 +	}
 +	return m.tracer.createSuccessResponse(m.reqId), true, nil
++}
++
++// runProcTransfer is called inside the child-reaper guard after every FD is
++// pinned. Notification validity binds those objects to the original TID.
++// The helper checks only thread liveness; processSyscall revalidates the ID
++// before responding. Neither check is atomic with the mount commit.
++func runProcTransfer(fd int32, id uint64, run func() ([]byte, error)) ([]byte, error) {
++	if err := libseccomp.NotifIDValid(libseccomp.ScmpFd(fd), id); err != nil {
++		return nil, err
++	}
++	return run()
 +}
 diff --git a/sysbox-fs/seccomp/tracer.go b/sysbox-fs/seccomp/tracer.go
 index 7781d7b..c952f2a 100644
@@ -328,3 +352,19 @@ index 1b1b1b51..335f58c6 100644
  				bail("setgid failed");
  
  			if (!config.is_rootless_euid && config.is_setgroup) {
+diff --git a/sysbox-fs/seccomp/mount.go b/sysbox-fs/seccomp/mount.go
+--- a/sysbox-fs/seccomp/mount.go
++++ b/sysbox-fs/seccomp/mount.go
+@@ -33,2 +33,3 @@
+-	syscallCtx                  // syscall generic info
+-	*domain.MountSyscallPayload // mount-syscall specific details
++	syscallCtx                        // syscall generic info
++	*domain.MountSyscallPayload       // mount-syscall specific details
++	notifyFd                    int32 // original seccomp listener; never passed to the helper
+diff --git a/sysbox-fs/seccomp/tracer.go b/sysbox-fs/seccomp/tracer.go
+--- a/sysbox-fs/seccomp/tracer.go
++++ b/sysbox-fs/seccomp/tracer.go
+@@ -610,2 +610,3 @@
+ 	mount := &mountSyscallInfo{
++		notifyFd: fd,
+ 		syscallCtx: syscallCtx{
