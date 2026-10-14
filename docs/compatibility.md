@@ -32,7 +32,7 @@ Passed: the unchanged non-root bwrap command; PID/User namespace separation and 
 
 ### Verification boundaries
 
-Runtime requires the paired patched daemon and trusted helper, registered container UID/GID maps, a direct child User namespace owning the target Mount/PID namespaces, container root `/`, empty proc data and accepted mount flags. It requires procfs `pidns` FD configuration plus `openat2`, pidfds and the new mount APIs (`fsopen`, `fsconfig`, `fsmount`, `open_tree`, `move_mount`, `mount_setattr`). Other kernels and architectures remain unverified. Issue #3 uses `pidfd_open(actual_tid, PIDFD_THREAD)` for both leader and nonleader requesters. Linux introduced this flag in 6.9; that alone does not establish the minimum kernel for procfs `pidns` or the complete transfer. The historical bubblewrap result covers leader requests only. **The updated pair passed the arm64 runtime checks below on 2026-10-14.** `MS_STRICTATIME` is in the whitelist but fails on this baseline; no blanket flag compatibility is claimed.
+Runtime requires the paired patched daemon and trusted helper, registered container UID/GID maps, a direct child User namespace owning the target Mount/PID namespaces, container root `/`, empty proc data and accepted mount flags. It requires procfs `pidns` FD configuration plus `openat2`, pidfds and the new mount APIs (`fsopen`, `fsconfig`, `fsmount`, `open_tree`, `move_mount`, `mount_setattr`). Other kernels and architectures remain unverified. Issue #3 uses `pidfd_open(actual_tid, PIDFD_THREAD)` for both leader and nonleader requesters. Linux introduced this flag in 6.9; that alone does not establish the minimum kernel for procfs `pidns` or the complete transfer. The historical bubblewrap result covers leader requests only. **The updated pair passed the arm64 runtime checks recorded in Review correction validation on 2026-10-14.** `MS_STRICTATIME` is in the whitelist but fails on this baseline; no blanket flag compatibility is claimed.
 
 
 The thread API requirement applies to leaders too. Thread pidfd acquisition has no fallback: `EINVAL` (unsupported flag), `ENOSYS` (missing syscall), `ESRCH` (exited TID) and permission/resource errors are returned as their original errno, with a daemon diagnostic containing `PIDFD_THREAD required`. No helper launches and no target changes on acquisition failure. The upstream Go tests inject these failures and assert a single acquisition on the actual TID. Unsupported flag tests are not older-kernel runtime support evidence. The helper reports `ESRCH` for observed exit and `EBADF` for an invalid FD; interrupted polls retry.
@@ -99,7 +99,7 @@ procfs の `pidns` FD 設定に加え、`openat2`、pidfd、新しい mount API�
 Issue #3 は leader と非 leader の両方で `pidfd_open(actual_tid, PIDFD_THREAD)` を使います。
 この flag は Linux 6.9 で導入されましたが、procfs の `pidns` や転送全体の最小 kernel を確定するものではありません。
 過去の bubblewrap の結果は leader の要求だけを対象とします。
-**更新した対は、2026-10-14 に下記の arm64 実行時検証を通過しました。**
+**更新した対は、2026-10-14 に「レビュー修正の検証」節に記載した arm64 実行時検証を通過しました。**
 `MS_STRICTATIME` は whitelist に含まれますが、基準環境では失敗します。
 全 flag の互換性を主張しません。
 
