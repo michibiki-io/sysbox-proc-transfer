@@ -61,7 +61,7 @@ func TestProtectedNetworkLookupFailure(t *testing.T) {
 		for _, failure := range []syscall.Errno{syscall.ENOENT, syscall.EPERM, syscall.EIO, syscall.ESRCH} {
 			path := "/sys/devices/virtual/net/lo"
 			cntr := dentryContainer{ready: true}
-			server := &fuseServer{container: cntr, service: &FuseServerService{ios: dentryIO{}, hds: dentryHandlers{err: failure}}}
+			server := &fuseServer{container: cntr, serveContainer: cntr, service: &FuseServerService{ios: dentryIO{}, hds: dentryHandlers{err: failure}}}
 			req := &domain.HandlerRequest{Name: "lo", Path: path, Container: cntr}
 			old := &bfuse.Attr{Inode: 77, Mode: kind | 0755, Size: 123, Uid: 12345, Gid: 23456, Valid: 123}
 			identity := server.networkLookupNode(req, old, domain.FileInfo{Fmode: kind | 0755, FisDir: kind&os.ModeDir != 0})
@@ -93,7 +93,7 @@ func TestProtectedNetworkLookupFailure(t *testing.T) {
 					delete(server.networkIdentities, path)
 				}
 				if change == "bootstrap" {
-					server.container = dentryContainer{}
+					server.serveContainer = dentryContainer{}
 				}
 				_, err := parent.Lookup(context.Background(), &bfuse.LookupRequest{Name: name}, new(bfuse.LookupResponse))
 				if err != bfuse.Errno(failure) {

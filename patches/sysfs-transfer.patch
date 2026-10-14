@@ -58,7 +58,17 @@ diff --git a/sysbox-fs/bazil/fs/serve.go b/sysbox-fs/bazil/fs/serve.go
  	return id, sn.generation
  }
  
-@@ -1378,13 +1396,17 @@
+@@ -1077,6 +1095,9 @@
+ 			if err := n.Getattr(ctx, r, s); err != nil {
+ 				return err
+ 			}
++			if s.Attr.Inode == 0 {
++				s.Attr.Inode = snode.inode
++			}
+ 		} else {
+ 			if err := snode.attr(ctx, &s.Attr); err != nil {
+ 				return err
+@@ -1378,13 +1399,17 @@
  		s := &fuse.ReadResponse{Data: make([]byte, 0, r.Size)}
  		if r.Dir {
  			if h, ok := handle.(HandleReadDirAller); ok {
@@ -78,7 +88,7 @@ diff --git a/sysbox-fs/bazil/fs/serve.go b/sysbox-fs/bazil/fs/serve.go
  					dirs, err := h.ReadDirAll(ctx, r)
  					if err != nil {
  						return err
-@@ -1395,6 +1417,12 @@
+@@ -1395,6 +1420,12 @@
  							dir.Inode = c.dynamicInode(snode.inode, dir.Name)
  						}
  						data = fuse.AppendDirent(data, dir)
@@ -95,14 +105,16 @@ diff --git a/sysbox-fs/domain/sysfs.go b/sysbox-fs/domain/sysfs.go
 new file mode 100644
 --- /dev/null
 +++ b/sysbox-fs/domain/sysfs.go
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,25 @@
 +// Copyright 2026 michibiki.io.
 +// SPDX-License-Identifier: Apache-2.0
 +
 +package domain
 +
 +// SysfsProtection is immutable registration-time mount metadata. Every source
-+// must still match its registered inode and mount ID when acquired.
++// must still match its registered mount ID and flag floor when acquired.
++// Registration capture does not collect inodes (Inode is normally zero); the
++// helper compares pinned source FD device/inode with its clone at use time.
 +type SysfsProtection struct {
 +	Path             string
 +	MountID          int
@@ -135,7 +147,7 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  	"time"
  
  	"github.com/nestybox/sysbox-fs/domain"
-@@ -89,7 +91,7 @@
+@@ -89,14 +91,14 @@
  	//     user-ns as long as user-ns-nesting continue to be unsupported).
  	d.server.RLock()
  	node, ok := d.server.nodeDB[path]
@@ -144,7 +156,22 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  		d.server.RUnlock()
  		return *node, nil
  	}
-@@ -127,6 +129,16 @@
+ 	d.server.RUnlock()
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -121,12 +123,22 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(path),
+ 	}
+ 
  	// Handler execution.
  	info, err := handler.Lookup(ionode, handlerReq)
  	if err != nil {
@@ -186,7 +213,61 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  
  	return newNode, nil
  }
-@@ -312,6 +333,9 @@
+@@ -182,7 +203,7 @@
+ 	resp *fuse.OpenResponse) (fs.Handle, error) {
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -205,15 +226,15 @@
+ 
+ 	logrus.Debugf("Requested Create() operation for entry %v (req ID=%#x)", req.Name, uint64(req.ID))
+ 
++	path := filepath.Join(d.path, req.Name)
++
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+ 			req.Pid)
+ 	}
+-
+-	path := filepath.Join(d.path, req.Name)
+ 
+ 	// New ionode reflecting the path of the element to be created.
+ 	ionode := d.server.service.ios.NewIOnode(req.Name, path, 0)
+@@ -234,7 +255,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(path),
+ 	}
+ 
+ 	// Handler execution. 'Open' handler will create new element if requesting
+@@ -282,7 +303,7 @@
+ 	logrus.Debugf("Requested ReadDirAll() on directory %v (req ID=%#v)", d.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -305,13 +326,16 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(d.path),
+ 	}
+ 
+ 	// Handler execution.
  	files, err := handler.ReadDirAll(ionode, handlerReq)
  	if err != nil {
  		logrus.Debugf("ReadDirAll() error: %v", err)
@@ -196,6 +277,15 @@ diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
  		return nil, fuse.ENOENT
  	}
  
+@@ -349,7 +373,7 @@
+ 	logrus.Debugf("Requested Mkdir() on directory %v (Req ID=%#v)", req.Name, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
 @@ -373,3 +397,104 @@
  
  	d.File.Forget()
@@ -323,6 +413,87 @@ diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
  		a.Valid = time.Duration(0)
  	} else {
  		a.Valid = time.Duration(AttribCacheTimeout)
+@@ -118,7 +119,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -140,7 +141,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -214,7 +215,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -237,7 +238,7 @@
+ 		Gid:       req.Gid,
+ 		Offset:    req.Offset,
+ 		Data:      make([]byte, req.Size),
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -261,7 +262,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -283,7 +284,7 @@
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+ 		Data:      req.Data,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -305,7 +306,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)", req.Pid)
+ 		return "", fmt.Errorf("Could not find container originating this request (pid %v)", req.Pid)
+ 	}
+@@ -324,7 +325,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -347,7 +348,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
 @@ -372,6 +373,12 @@
  	f.server.Lock()
  	defer f.server.Unlock()
@@ -347,7 +518,7 @@ diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
 +	if !networkUncached(f.path) {
 +		return f.Attr(ctx, &resp.Attr)
 +	}
-+	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
 +		return fuse.EIO
 +	}
 +	n := f.server.service.ios.NewIOnode(f.name, f.path, 0)
@@ -355,7 +526,7 @@ diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
 +	if !ok {
 +		return fuse.EIO
 +	}
-+	hr := &domain.HandlerRequest{ID: uint64(req.ID), Path: f.path, Name: f.name, Pid: req.Pid, Uid: req.Uid, Gid: req.Gid, Container: f.server.container}
++	hr := &domain.HandlerRequest{ID: uint64(req.ID), Path: f.path, Name: f.name, Pid: req.Pid, Uid: req.Uid, Gid: req.Gid, Container: f.server.requestContainer(f.path)}
 +	info, err := handler.Lookup(n, hr)
 +	if err != nil {
 +		return networkError(err)
@@ -384,7 +555,7 @@ diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
 diff --git a/sysbox-fs/fuse/server.go b/sysbox-fs/fuse/server.go
 --- a/sysbox-fs/fuse/server.go
 +++ b/sysbox-fs/fuse/server.go
-@@ -32,19 +32,20 @@
+@@ -32,19 +32,21 @@
  
  // FuseServer class in charge of running/hosting sysbox-fs' FUSE server features.
  type fuseServer struct {
@@ -405,7 +576,8 @@ diff --git a/sysbox-fs/fuse/server.go b/sysbox-fs/fuse/server.go
 +	conn              *bfuse.Conn              // Associated fuse connection
 +	path              string                   // fs path to emulate -- "/" by default
 +	mountPoint        string                   // mountpoint -- "/var/lib/sysboxfs" by default
-+	container         domain.ContainerIface    // associated sys container
++	container         domain.ContainerIface    // shared emulation state
++	serveContainer    domain.ContainerIface    // owning container for scoped network requests
 +	containerUid      uint32                   // container UID for caching purposes
 +	containerGid      uint32                   // container GID for caching purposes
 +	server            *bfusefs.Server          // bazil-fuse server instance
@@ -418,6 +590,75 @@ diff --git a/sysbox-fs/fuse/server.go b/sysbox-fs/fuse/server.go
  }
  
  func NewFuseServer(
+@@ -52,12 +54,16 @@
+ 	mountpoint string,
+ 	container domain.ContainerIface,
+ 	service *FuseServerService) domain.FuseServerIface {
+-
++	return newFuseServer(path, mountpoint, container, container, service)
++}
++
++func newFuseServer(path, mountpoint string, stateCntr, serveCntr domain.ContainerIface, service *FuseServerService) *fuseServer {
+ 	srv := &fuseServer{
+-		path:       path,
+-		mountPoint: mountpoint,
+-		container:  container,
+-		service:    service,
++		path:           path,
++		mountPoint:     mountpoint,
++		container:      stateCntr,
++		serveContainer: serveCntr,
++		service:        service,
+ 	}
+ 
+ 	return srv
+@@ -186,6 +192,7 @@
+ 
+ 	// Unset pointers for GC purposes.
+ 	s.container = nil
++	s.serveContainer = nil
+ 	s.server = nil
+ 	s.root = nil
+ 	s.service = nil
+@@ -247,3 +254,13 @@
+ func (s *fuseServer) IsCntrRegCompleted() bool {
+ 	return s.cntrReg
+ }
++
++// Shared emulation state remains unchanged. Scoped network acquisition and
++// protection metadata must use this server's owner, even after the first
++// container sharing the state has exited.
++func (s *fuseServer) requestContainer(path string) domain.ContainerIface {
++	if networkUncached(path) {
++		return s.serveContainer
++	}
++	return s.container
++}
+diff --git a/sysbox-fs/fuse/service.go b/sysbox-fs/fuse/service.go
+--- a/sysbox-fs/fuse/service.go
++++ b/sysbox-fs/fuse/service.go
+@@ -108,10 +108,11 @@
+ 		return errors.New("FuseServer with invalid mountpoint")
+ 	}
+ 
+-	srv := NewFuseServer(
++	srv := newFuseServer(
+ 		"/",
+ 		cntrMountpoint,
+ 		stateCntr,
++		serveCntr,
+ 		fss,
+ 	)
+ 
+@@ -129,7 +130,7 @@
+ 
+ 	// Store newly created fuse-server.
+ 	fss.Lock()
+-	fss.serversMap[cntrId] = srv.(*fuseServer)
++	fss.serversMap[cntrId] = srv
+ 	fss.Unlock()
+ 
+ 	logrus.Debugf("Created fuse server for container %s", cntrId)
 diff --git a/sysbox-fs/handler/implementations/passThrough.go b/sysbox-fs/handler/implementations/passThrough.go
 --- a/sysbox-fs/handler/implementations/passThrough.go
 +++ b/sysbox-fs/handler/implementations/passThrough.go

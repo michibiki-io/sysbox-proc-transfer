@@ -63,7 +63,7 @@ def manifest(lock, output):
     if len(architectures) != 1:
         raise ValueError("paired outputs have different architectures")
     inputs = sorted(set(lock["source_sha256"]) |
-                    {"build/Dockerfile", "build/sources.lock.json", "scripts/build.py", "tests/upstream/proc_policy_test.go"})
+                    {".dockerignore", "build/Dockerfile", "build/sources.lock.json", "scripts/build.py", "tests/upstream/proc_policy_test.go"})
     return {"schema_version": 1, "architecture": architectures.pop(),
             "sources": lock["components"], "builder": lock["builder"],
             "generator": lock["generator"],

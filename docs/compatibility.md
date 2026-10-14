@@ -50,9 +50,15 @@ Issue #5 adds code and focused fixtures for new nested sysfs and the virtual-net
 Record outer/setup/inner maps, namespace ownership, CapEff, NoNewPrivs, seccomp/filter counts and syscall flags. Preserve UID/GID1001, hostUsers false, nonprivileged, drop ALL and no privilege escalation; do not weaken sandbox isolation. Do not use Talos-in-Docker or initial-host User mount authority. Docker/privileged child/kind smoke are distinct compatibility tests, not the nested solution. Existing proc import acceptance is independent. Keep raw machine logs, identities and credentials private.
 
 
-On 2026-10-15 the implementation pair passed supplemental arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 checks in a private daemon and disposable OCI containers: eight actual nonleader shared/new-net RW/RO cases (unchanged bwrap UID1001 and inner-root0→outer1001), non-default and network-descendant protections, inherited root RO, interleaved network/offset/attribute cache checks, symlink confinement, mapped-root nobody/write denial, backing failure injection, six ownership/liveness/flag rejections and focused final lifecycle representatives. Current proc and existing sys-bind regressions and helper-unset behavior passed. The earlier complete64 checkpoint matrix belongs to an intermediate draft; the final fix rounds used focused representatives.
+Historical initial sysfs pair (sysbox-fs `f92e6128…`): on 2026-10-15 this pair passed supplemental arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 checks in a private daemon and disposable OCI containers: eight actual nonleader shared/new-net RW/RO cases (unchanged bwrap UID1001 and inner-root0→outer1001), non-default and network-descendant protections, inherited root RO, interleaved network/offset/attribute cache checks, symlink confinement, mapped-root nobody/write denial, backing failure injection, six ownership/liveness/flag rejections and focused final lifecycle representatives. That historical pair also passed proc and existing sys-bind regressions and helper-unset behavior. The earlier complete64 checkpoint matrix belongs to an intermediate draft; the final fix rounds used focused representatives.
 
-Separate compatibility paths passed with Docker 29.1.3, a privileged child proc mount, kind 0.30.0 and kindest/node v1.34.0 reaching Ready. The disposable OCI fixture required preloaded public arm64 images, nofile65536 and CPU delegation within its own new cgroup namespace. These privileges and fixture conditions are not the nested solution. Host daemon/configuration and existing clusters were untouched. Final native SHA-256: sysbox-fs `f92e612835d5c2cffbe9902d65a00f3280d26577f560f81201573e1dc0ee36d5`, sysfs helper `ba255be095ee0a46c7321ade56e2df109750faa62d4b3f83f0c0db0431bd9286`, unchanged proc helper `9125ecc309246e2bbdd1c83971a0737f0f7acc122d158eb5f5271a655b88c0fd`. Both architecture builds passed and their manifests match final input hashes. No byte-identical future rebuild, full audit or Talos support claim follows.
+Separate compatibility paths passed with Docker 29.1.3, a privileged child proc mount, kind 0.30.0 and kindest/node v1.34.0 reaching Ready. The disposable OCI fixture required preloaded public arm64 images, nofile65536 and CPU delegation within its own new cgroup namespace. These privileges and fixture conditions are not the nested solution. Host daemon/configuration and existing clusters were untouched. Historical initial sysfs pair native SHA-256: sysbox-fs `f92e612835d5c2cffbe9902d65a00f3280d26577f560f81201573e1dc0ee36d5`, sysfs helper `ba255be095ee0a46c7321ade56e2df109750faa62d4b3f83f0c0db0431bd9286`, unchanged proc helper `9125ecc309246e2bbdd1c83971a0737f0f7acc122d158eb5f5271a655b88c0fd`. Both architecture builds passed and their manifests match that pair’s input hashes. No byte-identical future rebuild, full audit or Talos support claim follows.
+
+Enabled registration constraint: with `SYSBOX_SYSFS_TRANSFER_HELPER` set, creation-time registration requires a `/sys` mount entry and readable mountinfo for the complete protection snapshot. A missing `/sys` entry or snapshot capture error fails closed and may prevent container startup. Transfer/backing subsequently requires filesystem type `sysfs` and mountinfo Root `/`; whole-root masks and restricted subtree binds fail there. Minimal OCI roots without `/sys` are therefore outside the enabled startup contract; no minimal-OCI runtime test is claimed. Helper-unset registration keeps the upstream path.
+
+The dentry-fix pair at head `56a5562` (amd64 daemon `95f7fc2d…`, arm64 daemon `dc5c7ddc…`) subsequently passed the focused build gates, failed-Lookup protection retention with deeper User/absent interface/injected EIO, four nonleader shared/new-Net RW/RO cases and proc/sys-bind regressions. Its broader interleave, helper-unset, Docker/kind and complete64 suites were not rerun.
+
+For the latest GETATTR/owning-container correction, the generated `manifest.json` is authoritative for complete artifact SHA-256 values and exact build input hashes. Output hashes are intentionally not build inputs. Both architecture builds passed the focused dispatch, owning-container and existing regression gates. Supplemental arm64 runtime passed two containers sharing Network/User and emulation state with distinct roots/Mount namespaces: the second retained its virtual-net view after the first exited. This is an OCI smoke, not a Kubernetes Pod test. Helper-unset outer FUSE, upstream nested denial and repeated real FUSE GETATTR via statx FORCE_SYNC also passed, retaining nonzero stable distinct emulated inodes. Four actual nonleader shared/new-Net RW/RO cases plus proc/sys-bind regressions also passed; the completion report records the exact outcomes separately. Do not apply the historical broad pass list to this latest pair. AC7 remains deferred/unrun.
 
 ## 日本語
 
@@ -156,15 +162,35 @@ Talos-in-Docker や初期ホスト User の mount 権限を解決策にしませ
 Docker、privileged child、kind の smoke は別経路の互換性検査です。
 既存 proc の取り込み条件は独立して維持し、実機生ログ、識別子、認証情報は公開しません。
 
-2026-10-15 に、一時 daemon と専用 OCI コンテナで arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 の補助検証を実施しました。
+初回 sysfs pair（sysbox-fs `f92e6128…`）の過去の検証として、2026-10-15 に、一時 daemon と専用 OCI コンテナで arm64/Linux 7.1/Sysbox 0.7.1/bwrap 0.9 の補助検証を実施しました。
 変更なしの bwrap の inner UID1001 と、inner root0→outer1001 の非 leader について、共有／新設 Network と RW／RO の計8条件が成功しました。
 非既定と network 配下の保護、外側 root RO の継承、Network と offset／属性 cache の交互読み取り、symlink 範囲、mapped root の nobody 所有と書き込み拒否、backing 失敗注入、6拒否条件、最終コードの競合代表条件も成功しました。
-現在の proc、既存 sys bind、helper 未設定時の回帰検査も成功しました。
+この初回 pair で proc、既存 sys bind、helper 未設定時の回帰検査も成功しました。
 全64条件の確認地点検査は中間 draft の結果とし、最終修正では代表条件だけを再検証しました。
 
 別経路の Docker 29.1.3、privileged child の proc mount、kind 0.30.0／kindest/node v1.34.0 の Ready 到達が成功しました。
 専用 OCI fixture は公開 arm64 image の事前取り込み、nofile65536、自身の新しい cgroup namespace 内の CPU 委譲を必要としました。
 この権限や構成を nested の解決策とは扱いません。
 ホスト daemon／設定と既存 cluster は変更していません。
-最終 native SHA-256 は前掲の英語節に記載し、両 architecture のビルドと最終入力 hash の一致を確認しました。
+初回 pair の native SHA-256 は前掲の英語節に記載し、当時の両 architecture のビルドと入力 hash の一致を確認しました。
 将来の byte 一致、完全な監査、Talos 対応を意味しません。
+
+有効化時の登録条件として、`SYSBOX_SYSFS_TRANSFER_HELPER` を設定すると、creation-time 登録に `/sys` の mount entry と、完全な保護 snapshot を取得できる mountinfo が必要です。
+`/sys` entry の欠落と snapshot 取得失敗は fail-closed で拒否し、コンテナ起動が失敗する場合があります。
+後続の transfer/backing は filesystem type `sysfs`、mountinfo Root `/` を要求し、全 root の mask と部分 tree の bind をその段階で拒否します。
+`/sys` のない最小 OCI root は有効化時の起動契約の対象外です。
+最小 OCI の runtime 検査は未実行で、helper 未設定時の登録は upstream 経路を維持します。
+
+後続の dentry 修正 pair は head `56a5562`（amd64 daemon `95f7fc2d…`、arm64 daemon `dc5c7ddc…`）です。
+focused build gate、深い User／不在 interface／注入 EIO の Lookup 失敗後の保護保持、非 leader の共有／新設 Network と RW／RO の4条件、proc／sys bind 回帰が成功しました。
+この pair では広い interleave、helper 未設定、Docker／kind、全64条件を再実行していません。
+
+最新の GETATTR／所有コンテナ修正の成果物 hash と正確な入力 hash は、生成する `manifest.json` を正本とします。
+出力 hash は build 入力に含めません。
+両 architecture build で実 dispatch、所有コンテナ、既存回帰の gate が成功しました。
+arm64 の補助 runtime では、Network/User と emulation state を共有し、root/Mount namespace を分けた2コンテナを検査し、先頭終了後も2番目の virtual-net view を保持しました。
+これは OCI smoke であり、Kubernetes Pod の実検査ではありません。
+helper 未設定時の外側 FUSE、従来の nested 拒否、statx FORCE_SYNC による実 FUSE GETATTR も成功し、emulated inode が非 zero、安定、相互に異なることを確認しました。
+非 leader の共有／新設 Network と RW／RO の4条件、proc／sys bind 回帰も成功し、正確な結果は完了報告で区別します。
+過去の広い成功一覧を最新 pair の再検証結果として扱いません。
+AC7 は deferred/unrun のままです。
