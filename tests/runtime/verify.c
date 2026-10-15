@@ -12,7 +12,9 @@
 /* Kernel-config-dependent asound (CONFIG_SND_PROC_FS), sysrq-trigger
  * (CONFIG_MAGIC_SYSRQ), swaps (CONFIG_SWAP) and sys (CONFIG_PROC_SYSCTL)
  * may be absent. The other seven entries, including OCI masks interrupts,
- * keys and timer_list, are required. */
+ * keys and timer_list, are required. /proc/keys depends on CONFIG_KEYS but
+ * deliberately remains required with the existing masks: an absent mask cannot
+ * satisfy protection validation, so such a kernel fails this fixture. */
 static const struct { const char *name; int optional; } catalog[]={
  {"uptime",0},{"swaps",1},{"sys",1},{"bus",0},{"fs",0},{"irq",0},
  {"sysrq-trigger",1},{"asound",1},{"interrupts",0},{"keys",0},{"timer_list",0}
@@ -28,7 +30,9 @@ static unsigned long number(const char *s){
  errno=0;char *end;unsigned long n=strtoul(s,&end,10);
  need(errno!=ERANGE&&!*end,"manifest numeric range");return n;
 }
-/* Exact, bounded newline-terminated rows: NAME absent or NAME present DEV INO FLAGS.
+/* Bounded newline-terminated rows: NAME absent or NAME present DEV INO FLAGS.
+ * Repeated, leading and trailing ASCII spaces are accepted; capture emits
+ * canonical single-space separators.
  * Parse the entire file before mount/namespace/protection operations. */
 static void load(const char *path,struct entry entries[COUNT]){
  FILE *f=fopen(path,"re");if(!f)fail("manifest");
