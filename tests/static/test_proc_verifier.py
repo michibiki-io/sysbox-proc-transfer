@@ -14,8 +14,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = 'uptime swaps sys bus fs irq sysrq-trigger asound interrupts keys timer_list'.split()
 
-OPTIONALS = ('asound', 'sysrq-trigger', 'swaps')
-ABSENCES = tuple(group for count in range(4) for group in combinations(OPTIONALS, count))
+OPTIONALS = ('asound', 'sysrq-trigger', 'swaps', 'sys')
+ABSENCES = tuple(group for count in range(len(OPTIONALS) + 1) for group in combinations(OPTIONALS, count))
 
 
 def baseline(absent=()):

@@ -34,9 +34,9 @@ Passed: the unchanged non-root bwrap command; PID/User namespace separation and 
 
 ### Proc verifier correction
 
-Issue #7 corrects the recursive readonly test's kernel-dependent entry assumption without changing production helpers or patches. Only the three optional entries `/proc/asound`, `/proc/sysrq-trigger` and `/proc/swaps` may be absent; the other eight catalog entries, including the three existing masks, remain required. `asound` depends on `CONFIG_SND_PROC_FS`; Linux v6.18 builds `sysrq.o` only with `CONFIG_MAGIC_SYSRQ` ([tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile)), and `swapfile.o` only with `CONFIG_SWAP` ([mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile)); [swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) registers `/proc/swaps`. Both consumers validate a complete, bounded present/absent baseline before mount operations; optional entries require explicit rows, and the original minimum of three checked protections remains enforced. Each observes expected absence as ENOENT and rejects other inspection errors or loss of previously present entries. Root and applicable subentry readonly checks, sandbox identity/masks/detach/remount checks, namespace/seccomp checks and caller privileges remain unchanged. ALSA installation, module loading and host reconfiguration are not prerequisites.
+Issue #7 corrects the recursive readonly test's kernel-dependent entry assumption without changing production helpers or patches. Only the four optional entries `/proc/asound`, `/proc/sysrq-trigger`, `/proc/swaps` and `/proc/sys` may be absent; the other seven catalog entries, including the three existing masks, remain required. `asound` depends on `CONFIG_SND_PROC_FS`; Linux v6.18 builds `sysrq.o` only with `CONFIG_MAGIC_SYSRQ` ([tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile)), and `swapfile.o` only with `CONFIG_SWAP` ([mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile)); [swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) registers `/proc/swaps`. The [proc Makefile](https://github.com/torvalds/linux/blob/v6.18/fs/proc/Makefile) builds `proc_sysctl.o` only with `CONFIG_PROC_SYSCTL`; the disabled `proc_sys_init` stub in [internal.h](https://github.com/torvalds/linux/blob/v6.18/fs/proc/internal.h) leaves `/proc/sys` potentially absent. Both consumers validate a complete, bounded present/absent baseline before mount operations; optional entries require explicit rows, and the original minimum of three checked protections remains enforced. Each observes expected absence as ENOENT and rejects other inspection errors or loss of previously present entries. Root and applicable subentry readonly checks, sandbox identity/masks/detach/remount checks, namespace/seccomp checks and caller privileges remain unchanged. ALSA installation, module loading and host reconfiguration are not prerequisites.
 
-The [runtime instructions](../tests/runtime/README.md#proc-protection-baseline) specify the new manifest/readonly argument contract and independently checksum-consumable tests. Focused regression tests compile actual verifier code with syscall stubs and cover all eight optional presence combinations in both consumers and capture roundtrips, plus capture and observation errors for each optional; they are distinct from real runtime validation. On 2026-10-16 the corrected runner passed in a disposable arm64/Linux 7.1.0/Sysbox 0.7.1/bubblewrap 0.9.0 environment with a UID/GID 1001 caller, CapEff 0, NoNewPrivs 1 and seccomp mode 2/filter count 1. Original bwrap, sandbox protections, existing sys binds, recursive readonly and nonleader RW/RO checks passed. All three optional entries were present on that kernel; absent cases are covered only by syscall simulation, not a real absent-entry kernel. Exact-head CI is reported on the PR; historical runtime results remain separate evidence. Actual Talos downstream revalidation is separately tracked by [installer issue #7](https://github.com/michibiki-io/talos-sysbox-installer/issues/7). New sysfs/FUSE acceptance remains independent.
+The [runtime instructions](../tests/runtime/README.md#proc-protection-baseline) specify the new manifest/readonly argument contract and independently checksum-consumable tests. Focused regression tests compile actual verifier code with syscall stubs and cover all 16 optional presence combinations in both consumers and capture roundtrips, plus capture and observation errors for each optional; they are distinct from real runtime validation. Before the `/proc/sys` optional-entry fix, on 2026-10-16 the prior runner passed in a disposable arm64/Linux 7.1.0/Sysbox 0.7.1/bubblewrap 0.9.0 environment with a UID/GID 1001 caller, CapEff 0, NoNewPrivs 1 and seccomp mode 2/filter count 1. Original bwrap, sandbox protections, existing sys binds, recursive readonly and nonleader RW/RO checks passed. The then-optional `asound`, `sysrq-trigger` and `swaps` were present on that kernel; absent cases are covered only by syscall simulation, not a real absent-entry kernel. The `/proc/sys` optional-entry fix has not yet been rerun in that runtime environment. Exact-head CI is reported on the PR; historical runtime results remain separate evidence. Actual Talos downstream revalidation is separately tracked by [installer issue #7](https://github.com/michibiki-io/talos-sysbox-installer/issues/7). New sysfs/FUSE acceptance remains independent.
 
 ### Verification boundaries
 
@@ -127,10 +127,11 @@ Issue #3 は arm64、Linux 7.1.0、Sysbox 0.7.1、bubblewrap 0.9.0 で、一時�
 ### proc 検査の修正
 
 Issue #7 は再帰的 readonly 検査の kernel 依存項目に関する前提を修正し、production helper と patch は変更しません。
-不在を許容するのは任意項目の `/proc/asound`、`/proc/sysrq-trigger`、`/proc/swaps` の3件だけで、既存の3 mask を含む他の8候補は必須です。
+不在を許容するのは任意項目の `/proc/asound`、`/proc/sysrq-trigger`、`/proc/swaps`、`/proc/sys` の4件だけで、既存の3 mask を含む他の7候補は必須です。
 `asound` は `CONFIG_SND_PROC_FS` に依存します。
 Linux v6.18 の [tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile) は `CONFIG_MAGIC_SYSRQ` のときだけ `sysrq.o` をビルドします。
 [mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile) は `CONFIG_SWAP` のときだけ `swapfile.o` をビルドし、[swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) が `/proc/swaps` を登録します。
+[proc Makefile](https://github.com/torvalds/linux/blob/v6.18/fs/proc/Makefile) は `CONFIG_PROC_SYSCTL` のときだけ `proc_sysctl.o` をビルドし、無効時には [internal.h](https://github.com/torvalds/linux/blob/v6.18/fs/proc/internal.h) の `proc_sys_init` が空の stub となるため、`/proc/sys` は不在になり得ます。
 両 consumer は mount 操作の前に、存在と不在を網羅する有限の事前記録を検証します。
 任意項目も明示的な行を必要とし、既存の保護対象3件以上という下限を維持します。
 期待する不在は各 consumer でも ENOENT と一致する必要があり、その他の観測エラーや存在した項目の消失は失敗とします。
@@ -138,12 +139,13 @@ root と適用対象の readonly、sandbox の identity、mask、detach/remount 
 ALSA の導入、module の読み込み、ホスト設定変更は前提にしません。
 
 [実行手順](../tests/runtime/README.md#proc-保護の事前記録)に、新しい記録形式、readonly の引数、checksum 固定で単独取得できる検査を記載します。
-対象を絞った回帰検査は実際の verifier を syscall stub とコンパイルし、任意3項目の全8組み合わせを両 consumer と capture roundtrip で確認するとともに、各任意項目の取得エラーと観測エラーを確認します。
+対象を絞った回帰検査は実際の verifier を syscall stub とコンパイルし、任意4項目の全16組み合わせを両 consumer と capture roundtrip で確認するとともに、各任意項目の取得エラーと観測エラーを確認します。
 実環境の検証とは区別します。
-2026-10-16 に使い捨ての arm64／Linux 7.1.0／Sysbox 0.7.1／bubblewrap 0.9.0 環境で、UID/GID 1001、CapEff 0、NoNewPrivs 1、seccomp mode 2・filter 1 の caller から修正版 runner を検証しました。
+`/proc/sys` を任意項目にする修正前の 2026-10-16 に使い捨ての arm64／Linux 7.1.0／Sysbox 0.7.1／bubblewrap 0.9.0 環境で、UID/GID 1001、CapEff 0、NoNewPrivs 1、seccomp mode 2・filter 1 の caller から当時の runner を検証しました。
 元の bwrap、sandbox 保護、既存 sys bind、再帰的 readonly、非 leader の RW/RO は成功しました。
-この kernel では任意3項目がすべて存在し、不在のケースは syscall 模擬検査だけで確認しています。
+この kernel では当時の任意項目 `asound`、`sysrq-trigger`、`swaps` がすべて存在し、不在のケースは syscall 模擬検査だけで確認しています。
 実際に不在の kernel での成功を示すものではありません。
+`/proc/sys` を任意項目にする修正後の runner は、この実環境では未実行です。
 確定 head の CI は PR に記録し、過去の runtime 結果とは区別します。
 実 Talos の下流再検証は [installer issue #7](https://github.com/michibiki-io/talos-sysbox-installer/issues/7) で別途追跡します。
 新規 sysfs/FUSE の受け入れ条件は独立して維持します。

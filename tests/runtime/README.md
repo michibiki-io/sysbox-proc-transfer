@@ -24,7 +24,7 @@ The unchanged bwrap command and existing policy checks remain. The runner also b
 
 Issue #7 changes the verifier only. `verify.sh` captures the outer `/proc` baseline before bwrap and passes that same file to `sandbox` and `readonly`. The readonly invocation is now `verify readonly TARGET MANIFEST`; capture and sandbox arguments are unchanged. Keep `verify.c` and `verify.sh` from the same checksum-locked revision and recapture on each run; old manifests are rejected.
 
-The fixed catalog has eight required entries: `uptime`, `sys`, `bus`, `fs`, `irq`, `interrupts`, `keys` and `timer_list`, including the three required masks. Only the three optional entries `asound`, `sysrq-trigger` and `swaps` may be absent. `asound` depends on `CONFIG_SND_PROC_FS`; Linux v6.18 builds `sysrq.o` only with `CONFIG_MAGIC_SYSRQ` ([tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile)), and `swapfile.o` only with `CONFIG_SWAP` ([mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile)); [swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) registers `/proc/swaps`. No ALSA, module loading or host reconfiguration is required. Capture writes one newline-terminated row per candidate: `NAME present DEV INO FLAGS` (unsigned decimal values), or `NAME absent` only on stat ENOENT for an optional entry. An optional entry still needs an explicit row; omitting it fails. Other source inspection errors fail before opening the output file.
+The fixed catalog has seven required entries: `uptime`, `bus`, `fs`, `irq`, `interrupts`, `keys` and `timer_list`, including the three required masks. Only the four optional entries `asound`, `sysrq-trigger`, `swaps` and `sys` may be absent. `asound` depends on `CONFIG_SND_PROC_FS`; Linux v6.18 builds `sysrq.o` only with `CONFIG_MAGIC_SYSRQ` ([tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile)), and `swapfile.o` only with `CONFIG_SWAP` ([mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile)); [swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) registers `/proc/swaps`. The [proc Makefile](https://github.com/torvalds/linux/blob/v6.18/fs/proc/Makefile) builds `proc_sysctl.o` only with `CONFIG_PROC_SYSCTL`; the disabled `proc_sys_init` stub in [internal.h](https://github.com/torvalds/linux/blob/v6.18/fs/proc/internal.h) leaves `/proc/sys` potentially absent. No ALSA, module loading or host reconfiguration is required. Capture writes one newline-terminated row per candidate: `NAME present DEV INO FLAGS` (unsigned decimal values), or `NAME absent` only on stat ENOENT for an optional entry. An optional entry still needs an explicit row; omitting it fails. Other source inspection errors fail before opening the output file.
 
 Both consumers parse the entire manifest before mounting or attempting detach/remount operations. Input is limited to 4096 bytes, 255 bytes per row excluding newline, and exactly 11 unique catalog rows. Empty, incomplete, duplicate, unknown, malformed, NUL-containing, overlong, unterminated and numerically overflowing input fails. All required entries and the existing minimum of three checked protections remain enforced. Expected absence must still be observed as stat ENOENT in each consumer; successful lookup, permission errors and other inspection failures fail. Previously present entries must remain observable.
 
@@ -36,9 +36,9 @@ Run the unprivileged focused regression separately:
 python3 tests/static/test_proc_verifier.py -v
 ```
 
-It compiles the actual `verify.c` entry points with syscall stubs in `tests/unit/proc-verifier.c`; the shipped runtime verifier has no bypass mode. It exercises all eight present/absent combinations of the three optional entries through both consumers and capture roundtrips, capture errors for each optional, malformed input before any mount operations, inspection failures and lost/writable protections, including every original check after absent `asound`. Downstream checksum consumers can fetch these three files in the same relative layout and execute the Python file without the build harness. `verify.sh` additionally requires `verify-sys.py` and `thread-proc.c` as before.
+It compiles the actual `verify.c` entry points with syscall stubs in `tests/unit/proc-verifier.c`; the shipped runtime verifier has no bypass mode. It exercises all 16 present/absent combinations of the four optional entries through both consumers and capture roundtrips, capture errors for each optional, malformed input before any mount operations, inspection failures and lost/writable protections, including every original check after absent `asound`. Downstream checksum consumers can fetch these three files in the same relative layout and execute the Python file without the build harness. `verify.sh` additionally requires `verify-sys.py` and `thread-proc.c` as before.
 
-These simulated checks do not establish real mount behavior. Run the corrected `verify.sh` in the authorized disposable Sysbox environment and report passed, failed and unrun checks for that exact revision. On 2026-10-16, the corrected runner passed in a disposable arm64/Linux 7.1.0/Sysbox 0.7.1/bubblewrap 0.9.0 environment as UID/GID 1001 with CapEff 0, NoNewPrivs 1 and seccomp mode 2/filter count 1. The original bwrap, sandbox protections, existing sys binds, recursive readonly and nonleader RW/RO checks passed. All three optional entries were present on that kernel; absent cases are covered only by the focused simulation, while real amd64/Talos 6.18.18 revalidation remains downstream. CI status is recorded against each PR head. Historical runtime successes above are separate evidence.
+These simulated checks do not establish real mount behavior. Run the corrected `verify.sh` in the authorized disposable Sysbox environment and report passed, failed and unrun checks for that exact revision. Before the `/proc/sys` optional-entry fix, on 2026-10-16 the prior runner passed in a disposable arm64/Linux 7.1.0/Sysbox 0.7.1/bubblewrap 0.9.0 environment as UID/GID 1001 with CapEff 0, NoNewPrivs 1 and seccomp mode 2/filter count 1. The original bwrap, sandbox protections, existing sys binds, recursive readonly and nonleader RW/RO checks passed. The then-optional `asound`, `sysrq-trigger` and `swaps` were present on that kernel; absent cases are covered only by the focused simulation, while real amd64/Talos 6.18.18 revalidation remains downstream. The `/proc/sys` optional-entry fix has not yet been rerun in that runtime environment. CI status is recorded against each PR head. Historical runtime successes above are separate evidence.
 
 ### Deterministic checkpoints
 
@@ -144,11 +144,12 @@ Issue #7 は検査プログラムだけを変更します。
 readonly の呼び出しは `verify readonly TARGET MANIFEST` となり、capture と sandbox の引数は変わりません。
 `verify.c` と `verify.sh` は同じ checksum 固定 revision から取得し、実行ごとに記録を作り直します。旧形式の記録は拒否します。
 
-固定候補のうち `uptime`、`sys`、`bus`、`fs`、`irq`、`interrupts`、`keys`、`timer_list` の8件は、既存の3 mask を含む必須項目です。
-任意項目の `asound`、`sysrq-trigger`、`swaps` の3件だけ不在を許容します。
+固定候補のうち `uptime`、`bus`、`fs`、`irq`、`interrupts`、`keys`、`timer_list` の7件は、既存の3 mask を含む必須項目です。
+任意項目の `asound`、`sysrq-trigger`、`swaps`、`sys` の4件だけ不在を許容します。
 `asound` は `CONFIG_SND_PROC_FS` に依存します。
 Linux v6.18 の [tty Makefile](https://github.com/torvalds/linux/blob/v6.18/drivers/tty/Makefile) は `CONFIG_MAGIC_SYSRQ` のときだけ `sysrq.o` をビルドします。
 [mm Makefile](https://github.com/torvalds/linux/blob/v6.18/mm/Makefile) は `CONFIG_SWAP` のときだけ `swapfile.o` をビルドし、[swapfile.c](https://github.com/torvalds/linux/blob/v6.18/mm/swapfile.c) が `/proc/swaps` を登録します。
+[proc Makefile](https://github.com/torvalds/linux/blob/v6.18/fs/proc/Makefile) は `CONFIG_PROC_SYSCTL` のときだけ `proc_sysctl.o` をビルドし、無効時には [internal.h](https://github.com/torvalds/linux/blob/v6.18/fs/proc/internal.h) の `proc_sys_init` が空の stub となるため、`/proc/sys` は不在になり得ます。
 ALSA の導入、module の読み込み、ホスト設定変更は要求しません。
 capture は各候補を改行で終わる一行に記録し、存在する場合は `NAME present DEV INO FLAGS`（符号なし十進数）、任意項目の stat が ENOENT の場合だけ `NAME absent` とします。
 任意項目も明示的な行が必要で、省略すると失敗します。
@@ -173,15 +174,16 @@ python3 tests/static/test_proc_verifier.py -v
 ```
 
 `tests/unit/proc-verifier.c` の syscall stub と実際の `verify.c` の entry point をコンパイルし、出荷する runtime verifier に検査を回避する mode は追加しません。
-任意3項目の存在と不在の全8組み合わせを両 consumer と capture roundtrip で確認し、各任意項目の capture エラー、mount 操作前の不正入力拒否、観測エラー、保護対象の消失と書き込み可能化、不在の `asound` より後の従来の全検査を確認します。
+任意4項目の存在と不在の全16組み合わせを両 consumer と capture roundtrip で確認し、各任意項目の capture エラー、mount 操作前の不正入力拒否、観測エラー、保護対象の消失と書き込み可能化、不在の `asound` より後の従来の全検査を確認します。
 下流はこの3ファイルを同じ相対配置で checksum 固定して取得し、build harness なしで Python ファイルを実行できます。
 `verify.sh` は従来どおり `verify-sys.py` と `thread-proc.c` も必要です。
 
 模擬検査だけでは実際の mount 動作を検証できません。
 修正版の `verify.sh` を許可された使い捨て Sysbox 環境で実行し、対象 revision の成功、失敗、未実行を区別して報告します。
-2026-10-16 に、使い捨ての arm64／Linux 7.1.0／Sysbox 0.7.1／bubblewrap 0.9.0 環境で修正版 runner を検証しました。
+`/proc/sys` を任意項目にする修正前の 2026-10-16 に、使い捨ての arm64／Linux 7.1.0／Sysbox 0.7.1／bubblewrap 0.9.0 環境で当時の runner を検証しました。
 UID/GID 1001、CapEff 0、NoNewPrivs 1、seccomp mode 2・filter 1 の条件で、元の bwrap、sandbox 保護、既存 sys bind、再帰的 readonly、非 leader の RW/RO が成功しました。
-この kernel では任意3項目がすべて存在しました。不在のケースは対象を絞った模擬検査だけで確認し、実 amd64／Talos 6.18.18 の再検証は下流で行います。
+この kernel では当時の任意項目 `asound`、`sysrq-trigger`、`swaps` がすべて存在しました。不在のケースは対象を絞った模擬検査だけで確認し、実 amd64／Talos 6.18.18 の再検証は下流で行います。
+`/proc/sys` を任意項目にする修正後の runner は、この実環境では未実行です。
 CI は各 PR head に対応付けて記録します。前述の過去の結果は別の証跡です。
 
 ### 決定的な確認地点
