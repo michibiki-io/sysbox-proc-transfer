@@ -33,7 +33,7 @@
     "helper/sysfs-mount-helper.c": "cde00c750f1c89f9b61f0e036a39c489510a2fa89594d124635938b88ce2bd54",
     "patches/proc-transfer.patch": "d7a6b3962fe4d58eeed0537660f226d3542bccb71dc0c29c8069b5d61fe88838",
     "patches/sysfs-transfer.patch": "6880096cc27c9709621f7125786a4f7d4c1234bff2109a35c008cca3711ab3de",
-    "tests/runtime/README.md": "9bbb37c5c5104fb5996f78b1d1b634730cf55b2963dcd858ccedb7a8f433057e",
+    "tests/runtime/README.md": "27a900ea3ce38871fe4e459336358e8feb01f59204ba4f03f9fe4f23dd91d9c9",
     "tests/runtime/checkpoint-requester.c": "26a5776f56b13b1748c879ba5821fdfae0f21e1c17dc2085d4a3f5360f239077",
     "tests/runtime/checkpoint-sysfs.c": "7e5726761261e02a152f574e48b894f224320f1b0854e968ad7a38d0865a533b",
     "tests/runtime/checkpoints.py": "e5c5a5d5a7bd20ef20458cac98e6d9364d91d7a14e26ded1ae3a650a41b8ec2e",
