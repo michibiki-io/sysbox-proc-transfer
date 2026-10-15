@@ -58,7 +58,11 @@ Enabled registration constraint: with `SYSBOX_SYSFS_TRANSFER_HELPER` set, creati
 
 The dentry-fix pair at head `56a5562` (amd64 daemon `95f7fc2d…`, arm64 daemon `dc5c7ddc…`) subsequently passed the focused build gates, failed-Lookup protection retention with deeper User/absent interface/injected EIO, four nonleader shared/new-Net RW/RO cases and proc/sys-bind regressions. Its broader interleave, helper-unset, Docker/kind and complete64 suites were not rerun.
 
-For the latest GETATTR/owning-container correction, the generated `manifest.json` is authoritative for complete artifact SHA-256 values and exact build input hashes. Output hashes are intentionally not build inputs. Both architecture builds passed the focused dispatch, owning-container and existing regression gates. Supplemental arm64 runtime passed two containers sharing Network/User and emulation state with distinct roots/Mount namespaces: the second retained its virtual-net view after the first exited. This is an OCI smoke, not a Kubernetes Pod test. Helper-unset outer FUSE, upstream nested denial and repeated real FUSE GETATTR via statx FORCE_SYNC also passed, retaining nonzero stable distinct emulated inodes. Four actual nonleader shared/new-Net RW/RO cases plus proc/sys-bind regressions also passed; the completion report records the exact outcomes separately. Do not apply the historical broad pass list to this latest pair. AC7 remains deferred/unrun.
+For the GETATTR/owning-container pair (head `1b881a2`), the generated `manifest.json` is authoritative for complete artifact SHA-256 values and exact build input hashes. Output hashes are intentionally not build inputs. Both architecture builds passed the focused dispatch, owning-container and existing regression gates. Supplemental arm64 runtime passed two containers sharing Network/User and emulation state with distinct roots/Mount namespaces: the second retained its virtual-net view after the first exited. This is an OCI smoke, not a Kubernetes Pod test. Helper-unset outer FUSE, upstream nested denial and repeated real FUSE GETATTR via statx FORCE_SYNC also passed, retaining nonzero stable distinct emulated inodes. Four actual nonleader shared/new-Net RW/RO cases plus proc/sys-bind regressions also passed; the completion report records the exact outcomes separately. Do not apply the historical broad pass list to the `1b881a2` pair. AC7 remains deferred/unrun.
+
+Backing-error/checkpoint pair (head `3c777da`): both public architecture builds and all focused gates passed. Supplemental arm64/Linux 7.1 runtime passed setup EIO/ENOENT/ENOTDIR injection with raw/high-level EIO, actual outer `/tmp` removal/recovery, true missing-resource ENOENT, three corrected direct-helper checkpoints, four nonleader shared/new-Net RW/RO cases and proc/sys-bind regressions. Helper-unset real GETATTR, two-container smoke, broad interleave/cache/write/race/rejection, Docker/kind and the full64 matrix were not rerun on that pair.
+
+The subsequent metadata-ownership clarification restricts constructors to this daemon's direct child helper, with CAP_SYS_ADMIN and FD10 pidfd. The locker performs no FUSE Lookup. Its builds and focused runtime are recorded separately in the PR completion report; earlier pair results remain historical. No broad or Talos/Pod rerun is implied.
 
 Enabled sysfs transfer/backing also requires a real `/tmp` directory in the registered outer rootfs (a symlink is insufficient). Private staging is attached only in the helper's private Mount namespace. Backing reports acquisition/construction ENOENT/ENOTDIR as EIO with the original diagnostic; only final network-resource resolution preserves genuine ENOENT/ENOTDIR. Transfer retains its original errno.
 
@@ -187,14 +191,18 @@ Docker、privileged child、kind の smoke は別経路の互換性検査です�
 focused build gate、深い User／不在 interface／注入 EIO の Lookup 失敗後の保護保持、非 leader の共有／新設 Network と RW／RO の4条件、proc／sys bind 回帰が成功しました。
 この pair では広い interleave、helper 未設定、Docker／kind、全64条件を再実行していません。
 
-最新の GETATTR／所有コンテナ修正の成果物 hash と正確な入力 hash は、生成する `manifest.json` を正本とします。
+GETATTR／所有コンテナ修正 pair（head `1b881a2`）の成果物 hash と正確な入力 hash は、生成する `manifest.json` を正本とします。
 出力 hash は build 入力に含めません。
 両 architecture build で実 dispatch、所有コンテナ、既存回帰の gate が成功しました。
 arm64 の補助 runtime では、Network/User と emulation state を共有し、root/Mount namespace を分けた2コンテナを検査し、先頭終了後も2番目の virtual-net view を保持しました。
 これは OCI smoke であり、Kubernetes Pod の実検査ではありません。
 helper 未設定時の外側 FUSE、従来の nested 拒否、statx FORCE_SYNC による実 FUSE GETATTR も成功し、emulated inode が非 zero、安定、相互に異なることを確認しました。
 非 leader の共有／新設 Network と RW／RO の4条件、proc／sys bind 回帰も成功し、正確な結果は完了報告で区別します。
-過去の広い成功一覧を最新 pair の再検証結果として扱いません。
+過去の広い成功一覧を `1b881a2` pair の再検証結果として扱いません。
 AC7 は deferred/unrun のままです。
 
 有効化した sysfs transfer/backing は、登録済み外側 rootfs の `/tmp` に実ディレクトリが必要です。symlink は使えません。staging は helper の private Mount namespace 内にだけ取り付けます。staging・task metadata・登録 source の取得や構築で ENOENT／ENOTDIR が発生した場合、backing は運用上の失敗として EIO を返します。最終 network resource 解決の真の不在だけ ENOENT／ENOTDIR を維持し、transfer の元 errno は保持します。
+
+backing error／checkpoint pair（head `3c777da`）は両 architecture build と focused gate が成功しました。arm64/Linux 7.1 の補助 runtime で setup EIO／ENOENT／ENOTDIR 注入時の raw／高水準 EIO、実 `/tmp` 欠落と復旧、真の不在の ENOENT、修正 direct-helper checkpoint3代表、非leader4条件、proc／sys bind回帰が成功しました。この pair では helper未設定の実 GETATTR、2コンテナ、広い interleave／cache／write／race／rejection、Docker／kind、全64条件は再実行していません。
+
+その後の metadata 所有関係の明確化は、constructor を daemon 直下の helper 本体（CAP_SYS_ADMIN と FD10 pidfd が必要）に限定します。locker は FUSE Lookup を行いません。この修正の build と focused runtime は PR 完了報告に分けて記録し、先行pairの結果を今回の再実行とは扱いません。Talos／Podの再検証も意味しません。

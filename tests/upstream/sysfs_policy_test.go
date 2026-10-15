@@ -272,3 +272,26 @@ func TestBackingFailureOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestMetadataConstructorOwnership(t *testing.T) {
+	pid := os.Getpid()
+	for _, row := range []struct {
+		tgid, parent      int
+		constructor, host bool
+	}{
+		{pid, pid + 1, false, true},
+		{pid + 2, pid, true, true},
+		{pid + 3, pid + 2, false, false},
+	} {
+		// Equal capabilities: ownership, not a missing capability, must reject grandchildren.
+		status := []byte(fmt.Sprintf("Tgid: %d\nPPid: %d\nCapEff: 0000000000200000\n", row.tgid, row.parent))
+		own, admin := metadataIdentity(status, true)
+		if own != row.constructor || !admin {
+			t.Fatalf("constructor boundary: %+v own=%v admin=%v", row, own, admin)
+		}
+		own, _ = metadataIdentity(status, false)
+		if own != row.host {
+			t.Fatalf("host boundary: %+v own=%v", row, own)
+		}
+	}
+}

@@ -1135,7 +1135,7 @@ diff --git a/sysbox-fs/sysfstransfer/transfer.go b/sysbox-fs/sysfstransfer/trans
 new file mode 100644
 --- /dev/null
 +++ b/sysbox-fs/sysfstransfer/transfer.go
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,477 @@
 +// Copyright 2026 michibiki.io.
 +// SPDX-License-Identifier: Apache-2.0
 +
@@ -1573,28 +1573,13 @@ new file mode 100644
 +	if err != nil {
 +		return false
 +	}
-+	own, admin := false, false
-+	parent := 0
-+	for _, line := range strings.Split(string(data), "\n") {
-+		fields := strings.Fields(line)
-+		if len(fields) == 2 && fields[0] == "CapEff:" {
-+			bits, e := strconv.ParseUint(fields[1], 16, 64)
-+			admin = e == nil && bits&(1<<21) != 0
-+		}
-+		if len(fields) == 2 && (fields[0] == "Tgid:" || fields[0] == "PPid:") {
-+			id, err := strconv.Atoi(fields[1])
-+			if err == nil && id == os.Getpid() {
-+				own = true
-+			}
-+			if err == nil && fields[0] == "PPid:" {
-+				parent = id
-+			}
-+		}
++	own, admin := metadataIdentity(data, requireAdmin)
++	if !own || (requireAdmin && !admin) {
++		return false
 +	}
 +	if requireAdmin {
-+		// The sacrificial locker inherits the same internal FD10 protocol. Permit
-+		// only a child of an owned helper, with capabilities still present and a
-+		// real pidfd in that slot. Ordinary nsenter/data workers cannot enter here.
++		// Only a direct child helper of this daemon may construct metadata,
++		// with capabilities still present and a real pidfd in FD10.
 +		fd, e := unix.Openat(dir, "fdinfo/10", unix.O_RDONLY|unix.O_CLOEXEC, 0)
 +		if e != nil {
 +			return false
@@ -1605,9 +1590,26 @@ new file mode 100644
 +		if e != nil || !strings.Contains(string(info), "\nPid:") {
 +			return false
 +		}
-+		if !own && parent > 0 {
-+			own = OwnMetadataTask(uint32(parent))
-+		}
 +	}
 +	return own && (!requireAdmin || admin) && taskAlive(thread) == nil
++}
++
++// Constructor metadata is limited to the direct helper, not its locker child.
++// Host metadata also permits this daemon's own threads.
++func metadataIdentity(data []byte, requireAdmin bool) (bool, bool) {
++	own, admin := false, false
++	for _, line := range strings.Split(string(data), "\n") {
++		fields := strings.Fields(line)
++		if len(fields) == 2 && fields[0] == "CapEff:" {
++			bits, e := strconv.ParseUint(fields[1], 16, 64)
++			admin = e == nil && bits&(1<<21) != 0
++		}
++		if len(fields) == 2 && (fields[0] == "Tgid:" || fields[0] == "PPid:") {
++			id, err := strconv.Atoi(fields[1])
++			if err == nil && id == os.Getpid() && (!requireAdmin || fields[0] == "PPid:") {
++				own = true
++			}
++		}
++	}
++	return own, admin
 +}

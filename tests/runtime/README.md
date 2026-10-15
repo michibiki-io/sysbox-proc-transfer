@@ -222,3 +222,7 @@ amd64/Linux 6.18.18-talos の gate は deferred/unrun とし、arm64/Linux 7.1/b
 Docker、privileged child、kind の smoke は別経路の結果として記録します。
 
 network 配下の保護と、不在・拒否 Lookup を組み合わせて検査します。隔離コンテナの登録前に `lo/ifalias` の OCI mask と `lo/statistics` の readonly self-bind を用意し、自身の Mount namespace に属する capable mapped な直下の子 observer から `python3 tests/runtime/sysfs-dentry-protection.py` を実行します。自身の転送 target、深い User、loopback を rename した新しい child-owned Network だけを使い、外側と転送 tree の mount ID、identity、保護属性、detach／remount 拒否を確認します。別の task 専用 failure helper では `--failure-switch /tmp/issue5-dentry-switch` を使用でき、helper と caller から同じ新しい task 所有 file が見える必要があります。明示的な EIO と保護 dentry の維持を要求し、既存 consumer daemon と host interface は対象にしません。
+
+For setup-error injection in a disposable container configured with the test failure helper, run `python3 tests/runtime/sysfs-failures.py <task-switch-path> 2` (ENOENT) or `20` (ENOTDIR). Both require raw getdents and high-level enumeration to fail with EIO; a normal helper's genuinely absent resource must retain ENOENT. With no numeric argument the injected setup error is EIO. The switch is task-owned and removed in cleanup.
+
+test failure helper を設定した使い捨てコンテナで、`python3 tests/runtime/sysfs-failures.py <task-switch-path> 2`（ENOENT）または `20`（ENOTDIR）を実行すると、setup の失敗を注入します。どちらも raw getdents と高水準列挙の EIO を要求し、正常な helper の真の不在 resource は ENOENT を維持します。数値引数を省くと EIO を注入します。switch は task 専用で、終了時に削除します。

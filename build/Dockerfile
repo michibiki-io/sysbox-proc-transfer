@@ -39,7 +39,7 @@ COPY tests/upstream/sysfs_snapshot_test.go /src/sysbox/sysbox-fs/mount/sysfs_sna
 COPY tests/upstream/sysfs_metadata_test.go /src/sysbox/sysbox-fs/handler/implementations/sysfs_metadata_test.go
 # Pinned upstream external-package tests have obsolete mocks; compile the full
 # production handler package with only this focused regression.
-RUN CGO_ENABLED=1 go test $(find handler/implementations -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) handler/implementations/sysfs_metadata_test.go -run '^TestNetworkSourceMetadata$' -count=1
+RUN CGO_ENABLED=1 go test $(find handler/implementations -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) handler/implementations/sysfs_metadata_test.go -run '^TestNetwork(SourceMetadata|MetadataGrandchild)$' -count=1
 COPY tests/upstream/sysfs_dentry_test.go /src/sysbox/sysbox-fs/fuse/sysfs_dentry_test.go
 RUN CGO_ENABLED=1 go test $(find fuse -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) fuse/sysfs_dentry_test.go -run '^TestProtectedNetworkLookupFailure$' -count=1
 COPY tests/upstream/fuse_container_test.go /src/sysbox/sysbox-fs/fuse/fuse_container_test.go
