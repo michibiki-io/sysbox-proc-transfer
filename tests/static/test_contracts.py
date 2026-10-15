@@ -14,9 +14,11 @@ spec = importlib.util.spec_from_file_location("build_tool", ROOT / "scripts/buil
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 PUBLIC_FILES = {
+ "tests/upstream/fuse_container_test.go", "tests/upstream/sysfs_dentry_test.go", "tests/runtime/sysfs-dentry-protection.py",
+ "tests/runtime/sysfs-write-policy.py", "helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "tests/unit/sysfs-checkpoint.c", "tests/unit/sysfs-liveness.c", "tests/static/test_sysfs.py", "tests/runtime/thread-sysfs.c", "tests/runtime/checkpoint-sysfs.c", "tests/runtime/sysfs-network.py", "tests/runtime/sysfs-interleave.py", "tests/runtime/sysfs-failures.py", "tests/unit/sysfs-failure-helper.c",
     "tests/runtime/README.md",
     'tests/runtime/thread-proc.c', 'tests/runtime/checkpoint-requester.c', 'tests/runtime/checkpoints.py', 'tests/unit/lifecycle.c', 'tests/unit/helper-checkpoint.c', 'tests/unit/helper-liveness.c', 'tests/static/test_lifecycle.py',
-    "LICENSE", "LICENSES/Apache-2.0.txt", "THIRD_PARTY_NOTICES.md", "README.md",
+    "LICENSE", "LICENSES/Apache-2.0.txt", "LICENSES/bazil-fuse.txt", "THIRD_PARTY_NOTICES.md", "README.md",
     "docs/design.md", "docs/security-model.md", "docs/compatibility.md",
     "helper/proc-mount-helper.c", "patches/proc-transfer.patch",
     "build/Dockerfile", "build/sources.lock.json", "scripts/build.py",
@@ -41,10 +43,10 @@ class Contracts(unittest.TestCase):
         for name, argument in build.COMPONENT_ARGS.items():
             component = lock["components"][name]
             self.assertEqual(args[argument], component["revision"])
-            component_name = "sysbox" if name == "root" else "sysbox-" + name
+            component_name = "sysbox" if name == "root" else "fuse" if name == "fuse" else "sysbox-" + name
             self.assertEqual(component["repository"],
                              "https://github.com/nestybox/" + component_name + ".git")
-            revision_check = 'git rev-parse HEAD' if name == "root" else f'git -C {component_name} rev-parse HEAD'
+            revision_check = 'git rev-parse HEAD' if name == "root" else 'git -C sysbox-fs/bazil rev-parse HEAD' if name == "fuse" else f'git -C {component_name} rev-parse HEAD'
             self.assertIn(f'"$({revision_check})" = "${argument}"', dockerfile)
         self.assertIn(f'--branch {lock["upstream_tag"]} {lock["components"]["root"]["repository"]}', dockerfile)
         self.assertIn("git submodule update --init --recursive", dockerfile)
@@ -63,11 +65,11 @@ class Contracts(unittest.TestCase):
             header[:4] = b"\x7fELF"
             header[5] = 1
             header[18:20] = (183).to_bytes(2, "little")
-            for name in ("sysbox-fs", "proc-mount-helper"):
+            for name in ("sysbox-fs", "proc-mount-helper", "sysfs-mount-helper"):
                 (output / name).write_bytes(header + name.encode())
             record = build.manifest(lock, output)
             self.assertEqual(record["architecture"], "arm64")
-            self.assertEqual(set(record["output_sha256"]), {"sysbox-fs", "proc-mount-helper"})
+            self.assertEqual(set(record["output_sha256"]), {"sysbox-fs", "proc-mount-helper", "sysfs-mount-helper"})
             for name, digest in record["output_sha256"].items():
                 self.assertEqual(digest, build.sha256(output / name))
             self.assertNotIn(work, json.dumps(record))
@@ -105,7 +107,7 @@ class Contracts(unittest.TestCase):
         included = {rule[1:] for rule in rules[1:] if rule.startswith("!")}
         copied = set(re.findall(r"^COPY (?!\-\-)(\S+) ",
                                 (ROOT / "build/Dockerfile").read_text(), re.M))
-        self.assertEqual(copied, {"helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go", "tests/unit/lifecycle.c"})
+        self.assertEqual(copied, {"tests/upstream/fuse_container_test.go", "tests/upstream/sysfs_dentry_test.go", "helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "helper/proc-mount-helper.c", "patches/proc-transfer.patch", "tests/upstream/proc_policy_test.go", "tests/unit/lifecycle.c"})
         expected = copied | {"build/Dockerfile", "build/", "helper/", "patches/", "tests/", "tests/upstream/", "tests/unit/"}
         self.assertEqual(included, expected)
         self.assertTrue(all(not any(c in rule for c in "*?") for rule in included))

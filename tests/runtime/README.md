@@ -5,6 +5,8 @@
 - [English](#english): [Actual Sysbox path](#actual-sysbox-path), [Deterministic checkpoints](#deterministic-checkpoints)
 - [日本語](#日本語): [実際の Sysbox 経路](#実際の-sysbox-経路), [決定的な確認地点](#決定的な確認地点)
 
+- [New sysfs and network checks](#new-sysfs-and-network-checks) / [新規 sysfs と Network の検査](#新規-sysfs-と-network-の検査)
+
 ## English
 
 ### Actual Sysbox path
@@ -49,6 +51,49 @@ Run this complete matrix (32 invocations), one fresh sandbox per case:
 At staging/transfer, detected exit must return ESRCH with unchanged target. Interrupt, leader thread-exit and leader exec at these stages must commit the protected tree while the original notification rejects a success response with ENOENT. At commit, all actions force a commit race; the surviving observer must confirm intended PID identity, all registered submount identities, masks, recursive read-only attributes and detach locks. The original invalid notification must reject success. Missing checkpoints, ioctl/namespace errors, observer failures and cleanup timeouts fail the test; there is no skip-to-pass fallback. Helpers must be reaped within 30 seconds after launch (25 second daemon limit plus 5 second observation allowance); the local unit suite separately tests the 20 second alarm and parent-death child cleanup. The harness closes its owned descriptors and kills only pinned, uniquely tagged actors/supervisor/observer.
 
 The whole-process/thread exit cases before staging/transfer prove failure cleanup. The post-poll cases prove retained protection despite an allowed race. Notification validation and commit are not atomic; see [design](../../docs/design.md). Run the historical `helper-rejections.py` modes as well. Keep raw logs and namespace identifiers local; public evidence records only architecture, kernel/runtime versions and pass/fail outcomes.
+
+### New sysfs and network checks
+
+These checks require an already provisioned disposable Sysbox container and configured trusted sysfs helper. They retain the production listener. Install dependencies in the disposable image before testing. Place this repository at `/tmp/issue5-repo` in that image (the surviving observer uses that fixed test-only oracle path). Compile `thread-sysfs.c` outside the bwrap tmpfs, then bind both the executable and repository into its private `/tmp`:
+
+```sh
+cc -O2 -Wall -Wextra -Werror -pthread tests/runtime/thread-sysfs.c -o "$SYSFS_PROBE"
+for net in shared-net new-net; do
+  for mode in readwrite readonly; do
+    bwrap --die-with-parent --unshare-all --share-net \
+      --bind / / --dev-bind /dev /dev --tmpfs /tmp \
+      --ro-bind /tmp/issue5-repo /tmp/issue5-repo \
+      --ro-bind "$SYSFS_PROBE" "$SYSFS_PROBE" --cap-add CAP_SYS_ADMIN --cap-add CAP_NET_ADMIN -- \
+      "$SYSFS_PROBE" /tmp/thread-sysfs "$mode" "$net"
+  done
+done
+bwrap --die-with-parent --unshare-all \
+  --bind / / --dev-bind /dev /dev --cap-add CAP_SYS_ADMIN --cap-add CAP_NET_ADMIN -- \
+  /usr/bin/python3 tests/runtime/sysfs-interleave.py /sys
+```
+
+Also run the same four probe cases as inner UID/GID0 mapped to outer caller IDs:
+
+```sh
+unshare --user --map-root-user --mount --pid --fork -- \
+  "$SYSFS_PROBE" /tmp/issue5-root-probe readwrite shared-net
+```
+
+Use a fresh caller-owned target path for each shared/new-net and RW/RO case and remove the empty leader-side directory afterward. Record `id`, uid_map/gid_map and capability/NNP/seccomp state within that same entry path. The unchanged bwrap fixture deliberately keeps its existing caller UID map; this additional probe covers the root mapping without changing that invocation. A `/dev/null` mask can become inaccessible under the mandatory recursive nodev floor: the observer requires unchanged identity and either empty reads or EACCES with nodev, never readable contents.
+
+CAP_SYS_ADMIN and CAP_NET_ADMIN here are **child User namespace** capabilities for the surviving observer and its owned network fixtures, never outer Pod or initial-host capabilities. The fresh-Net nonleader creates `issue5-tid` only in its private Network and requires the leader’s interface membership and indices to remain unchanged. The nonleader probe checks a separate thread Mount/Network namespace, source identities, all security floors, detach/move and RO-remount denial. Its independent observer compares class/net and protected devices/virtual/net with netlink, per-interface ifindex/mtu, symlink targets, raw getdents and high-level enumeration. `sysfs-interleave.py` primes a nonzero offset on a shared directory handle in its own disposable child-owned parent Network, then repeatedly switches between two owned Network namespaces with different interface names/MTUs and shared-namespace positive/negative lookup and attribute priming. Only disposable fixture interfaces may be changed.
+
+Use `tests/unit/sysfs-checkpoint.c`, `tests/runtime/checkpoint-sysfs.c` and `checkpoints.py --filesystem sysfs` for the same 32-case direct-helper race matrix. Bind `/tmp/issue5-repo` into that sandbox too. FD7 is Network. The synthetic notification remains a direct fixture, separate from the real mount probe. Use `helper-rejections.py --filesystem sysfs` for existing modes plus wrong-network, deeper-user and backing-symlink. The last mode calls the real backing helper directly: final `lo/subsystem` Readlink succeeds, while Lookup/Open through that link fail with ELOOP. Run `sysfs-write-policy.py` as outer mapped root and capable direct-child root, each in a fresh private loopback-only Network; it checks nobody Lookup/Getattr, write denial and unchanged MTU. A child UID map may start at outer UID0; the fixture requires a bounded map rather than mistaking that for initial-host User authority. No failed source acquisition may be skipped.
+
+For complete policy coverage, provision the disposable container with non-default masked files, RO paths and a nested protected mount before registration, then compare all sources with the capable observer. Do not remove policy to make a probe pass. Test masked contents and write denial separately from missing paths. Compile the test-only `sysfs-failure-helper.c` with trusted `TEST_HELPER` and `TEST_TRIGGER` absolute paths and use it only in a separate disposable daemon. `sysfs-failures.py` opens the network directory before creating the task-owned switch, then requires EIO from raw getdents and high-level enumeration and unchanged target on failed actual mount. The switch must address the same task-owned file from the helper host view and caller container view. Do not change a consumer daemon.
+
+Record outer/setup/inner maps, ownership, capability/NNP/seccomp/filter state, kernel/architecture/runtime versions, request flags and hashes of unpatched/patched binaries. The Linux 6.18.18-talos amd64 gate is deferred/unrun; supplemental arm64/Linux 7.1/bwrap 0.9 results are not Talos support. Existing proc and `/sys` bind acceptance remain independent. Rootful Docker/privileged child/kind smoke must be recorded as separate paths.
+
+Combine network-nested protections with negative and rejected lookups: register an OCI mask on `/sys/devices/virtual/net/lo/ifalias` and a readonly self-bind on `lo/statistics` in the disposable container, then run `python3 tests/runtime/sysfs-dentry-protection.py` as the capable mapped direct-child observer in its own Mount namespace. It creates only its own transfer target, probes deeper User namespaces and a fresh child-owned Network whose loopback is renamed, then checks both original and transferred mount IDs/identities/floors and detach/remount denial. A separately configured task-only failure helper may use `--failure-switch /tmp/issue5-dentry-switch`; the switch must resolve to the same new task-owned file in helper and caller views. Failure must remain explicit EIO while protection dentries survive. Never run this with an existing consumer daemon or on host interfaces.
+
+For setup-error injection in a disposable container configured with the test failure helper, run `python3 tests/runtime/sysfs-failures.py <task-switch-path> 2` (ENOENT) or `20` (ENOTDIR). Both require raw getdents and high-level enumeration to fail with EIO; a normal helper's genuinely absent resource must retain ENOENT. With no numeric argument the injected setup error is EIO. The switch is task-owned and removed in cleanup.
+
+Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset continuation is consistent only in the same Network while the listing stays unchanged. Sharing a handle across Networks or changing the listing makes old byte cookies undefined: continuation can be empty, truncated or rejected with EIO. Rewind with `lseek(fd, 0, SEEK_SET)`/`rewinddir` before reading the new view. The shared-handle continuation check proves absence of foreign names only; after rewind, the fixture requires the complete current name set.
 
 ## 日本語
 
@@ -139,3 +184,49 @@ poll 後の検査は、許容する競合でも保護を保持することを確
 通知の確認と commit は原子的ではありません。
 [設計](../../docs/design.md) を参照し、既存の `helper-rejections.py` の全モードも実行します。
 生ログと namespace 識別子はローカルに保持し、公開する証跡は architecture、kernel/runtime の版、合否に限定します。
+
+### 新規 sysfs と Network の検査
+
+構成済みの隔離 Sysbox コンテナと、信頼された sysfs helper の設定を使います。
+production listener を保持し、依存物は隔離 image に事前に用意します。
+observer が参照する検査専用 path `/tmp/issue5-repo` にリポジトリを配置します。
+前掲 command は binary とリポジトリを bwrap の private `/tmp` へ bind し、共有 Network と新設 Network、RW と RO を検査します。
+追加する capability は child User namespace 内の observer と自身の Network fixture 用であり、outer Pod や初期ホストの権限ではありません。
+
+同じ四条件を `unshare --user --map-root-user --mount --pid --fork` からも実行し、inner UID/GID0 が outer caller に対応することを確認します。
+各条件で固有の target を使い、leader 側に残る空の directory を終了後に削除します。
+元の bwrap 呼び出しは維持し、この追加経路の map、capability、NNP、seccomp を別途記録します。
+必須の再帰的 nodev により `/dev/null` mask が読み取り不能になる場合、observer は同じ identity と nodev による EACCES を要求します。
+読み取りが成功する場合は空であることを要求し、内容の露出は許可しません。
+
+非 leader probe は thread 固有 Mount/Network、全 source identity と保護属性、detach/move、RO 解除拒否を確認します。
+独立 observer は netlink と class/net、保護された devices/virtual/net、ifindex/mtu、symlink、raw getdents、高水準列挙を照合します。
+fresh-Net の非 leader は private Network にだけ `issue5-tid` を作成し、leader の interface 一覧と ifindex が不変であることを検査します。
+`sysfs-interleave.py` は自身の child User が所有する Network で共有 directory handle の非 zero offset を先行取得し、異なる名前と MTU の二つの Network namespace を交互に読み、共有側の正と負の lookup、属性 cache の先行取得も検査します。
+変更対象は自身の隔離 fixture の interface だけです。
+
+直接起動の競合検査には `sysfs-checkpoint.c`、`checkpoint-sysfs.c`、`checkpoints.py --filesystem sysfs` を使い、同じ32条件を検査します。
+この sandbox にも `/tmp/issue5-repo` を bind します。
+FD7 は Network で、合成通知の直接 fixture と実 mount probe の証跡を分けます。
+拒否検査は `helper-rejections.py --filesystem sysfs` の既存条件と wrong-network、deeper-user、backing-symlink を使います。
+backing-symlink は実 helper で末尾の Readlink 成功と、そのリンクを通る Lookup/Open の ELOOP を確認します。
+`sysfs-write-policy.py` は外側 mapped root と capable な直下の子 root で、それぞれ新しい loopback のみの Network を使い、nobody 所有、書き込み拒否、MTU 不変を確認します。
+source の取得失敗を省略しません。
+
+非既定の mask、RO path、入れ子の保護 mount は登録前に隔離コンテナへ構成します。
+全 source を capable observer と照合し、mask 内容、書き込み拒否、実際に存在しない path を別々に検査します。
+合否を通すために policy を解除しません。
+検査専用 `sysfs-failure-helper.c` に信頼された `TEST_HELPER` と `TEST_TRIGGER` の絶対パスをコンパイル時に渡し、別の隔離 daemon だけで使います。
+`sysfs-failures.py` は directory を正常に開いた後、同じ検査専用 switch file を作り、raw getdents と高水準列挙の EIO、新規 mount の target 不変を要求します。
+consumer daemon は変更しません。
+
+outer、setup、inner の map、所有関係、capability/NNP/seccomp/filter、実バージョン、flags、成果物 hash を記録します。
+amd64/Linux 6.18.18-talos の gate は deferred/unrun とし、arm64/Linux 7.1/bwrap 0.9 の補助結果で対応済みとは扱いません。
+既存 proc と `/sys` bind の受け入れ条件は独立して保持します。
+Docker、privileged child、kind の smoke は別経路の結果として記録します。
+
+network 配下の保護と、不在・拒否 Lookup を組み合わせて検査します。隔離コンテナの登録前に `lo/ifalias` の OCI mask と `lo/statistics` の readonly self-bind を用意し、自身の Mount namespace に属する capable mapped な直下の子 observer から `python3 tests/runtime/sysfs-dentry-protection.py` を実行します。自身の転送 target、深い User、loopback を rename した新しい child-owned Network だけを使い、外側と転送 tree の mount ID、identity、保護属性、detach／remount 拒否を確認します。別の task 専用 failure helper では `--failure-switch /tmp/issue5-dentry-switch` を使用でき、helper と caller から同じ新しい task 所有 file が見える必要があります。明示的な EIO と保護 dentry の維持を要求し、既存 consumer daemon と host interface は対象にしません。
+
+test failure helper を設定した使い捨てコンテナで、`python3 tests/runtime/sysfs-failures.py <task-switch-path> 2`（ENOENT）または `20`（ENOTDIR）を実行すると、setup の失敗を注入します。どちらも raw getdents と高水準列挙の EIO を要求し、正常な helper の真の不在 resource は ENOENT を維持します。数値引数を省くと EIO を注入します。switch は task 専用で、終了時に削除します。
+
+virtual-net の READDIR は要求ごとに byte stream を再生成します。非0 offset の継続が一貫するのは、同じ Network で一覧が不変の場合だけです。Network をまたぐ handle 共有や一覧変更後の古い byte cookie の結果は未定義で、空、切り詰め、EIO となりえます。新しい view は `lseek(fd, 0, SEEK_SET)`／`rewinddir` で先頭へ戻して読みます。共有 handle の継続検査は他 Network の名前が出ないことだけを確認し、巻き戻し後は現在の名前集合との完全一致を要求します。

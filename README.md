@@ -15,6 +15,8 @@
   - [関連文書](#関連文書)
   - [ライセンス](#ライセンス)
 
+- [Sysfs opt-in](#sysfs-opt-in) / [sysfs の有効化](#sysfs-の有効化)
+
 ## English
 
 ### Overview
@@ -31,7 +33,7 @@ python3 scripts/build.py
 python3 scripts/build.py --platform linux/arm64 --output dist
 ```
 
-The default is a native build. `dist/` receives `sysbox-fs`, `proc-mount-helper` and `manifest.json` using BuildKit local output from a scratch stage. The manifest records the output ELF architecture, component revisions, builder digest, generator version and input/output SHA-256 hashes without machine identities or local paths. Treat the two binaries as a matched pair. Set `SYSBOX_PROC_TRANSFER_HELPER` in the `sysbox-fs` process environment to the trusted helper executable's absolute path; an unset variable leaves the original proc mount path active. Protect both executables and that environment from container callers. Host deployment configuration is outside this repository.
+The default is a native build. `dist/` receives `sysbox-fs`, `proc-mount-helper`, `sysfs-mount-helper` and `manifest.json` using BuildKit local output from a scratch stage. The manifest records the output ELF architecture, component revisions, builder digest, generator version and input/output SHA-256 hashes without machine identities or local paths. Treat the three binaries as one build. Set `SYSBOX_PROC_TRANSFER_HELPER` in the `sysbox-fs` process environment to the trusted helper executable's absolute path; an unset variable leaves the original proc mount path active. Protect all three executables and that environment from container callers. Host deployment configuration is outside this repository.
 
 [build/sources.lock.json](build/sources.lock.json) is the authoritative pin source. The wrapper supplies its values as Docker build arguments, checks source integrity hashes, and the builder checks root/component commits after recursive submodule initialization. IPC protobuf generation with `protoc-gen-go` v1.3.5 runs before building `sysbox-fs`. A focused upstream-package regression test verifies read-only policy normalization before nested dispatch without executing a helper or changing mounts. The patch retains upstream component paths and is applied at the Sysbox root. The namespace-entry C code is linked into `sysbox-fs`; standalone `sysbox-runc` and `sysbox-mgr` need no replacement for this patch.
 
@@ -78,7 +80,13 @@ CI runs focused checks and a native container build from public inputs. It does 
 
 ### License
 
-Original helper, validation, build tooling and documentation use the root [MIT license](LICENSE). The Sysbox patch is an Apache-2.0 derivative; upstream attribution and license are retained in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Static binary redistribution requires separate third-party license review, including applicable LGPL obligations; root MIT does not cover every linked dependency.
+Original helper, validation, build tooling and documentation use the root [MIT license](LICENSE). The Sysbox portions of the patches are Apache-2.0 derivatives; the pinned FUSE-library change retains its [BSD notice](LICENSES/bazil-fuse.txt); upstream attribution and license are retained in [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Static binary redistribution requires separate third-party license review, including applicable LGPL obligations; root MIT does not cover every linked dependency.
+
+### Sysfs opt-in
+
+Issue #5 adds a separate opt-in sysfs path. Set the trusted daemon environment `SYSBOX_SYSFS_TRANSFER_HELPER` to the absolute path of `sysfs-mount-helper`. Unset preserves upstream sysfs dispatch. The proc helper source and FD protocol remain unchanged. Builds export all three binaries plus their manifest; deploy them from the same build. The new sysfs path and FUSE repair are separate from existing proc import acceptance. **AC7 is deferred/unrun until talos-sysbox-installer integration on genuine amd64/6.18.18-talos, Sysbox 0.7.1 and bwrap 0.12.0.** Compilation and supplemental arm64 tests do not establish that support.
+
+Use [runtime instructions](tests/runtime/README.md) for the new nonleader sysfs probe and direct lifecycle fixture. Preserve all outer masks/read-only mounts and the original bwrap proc and `/sys` bind checks. Production helpers never accept test checkpoint sockets. No installer, host daemon or cluster changes are supplied.
 
 ## 日本語
 
@@ -109,10 +117,10 @@ python3 scripts/build.py --platform linux/arm64 --output dist
 ```
 
 既定ではビルダーのネイティブアーキテクチャ向けにビルドします。
-scratch ステージから BuildKit のローカル出力を使い、`dist/` に `sysbox-fs`、`proc-mount-helper`、`manifest.json` を出力します。
+scratch ステージから BuildKit のローカル出力を使い、`dist/` に `sysbox-fs`、`proc-mount-helper`、`sysfs-mount-helper`、`manifest.json` を出力します。
 manifest は ELF のアーキテクチャ、コンポーネントのリビジョン、ビルダーのダイジェスト、生成器のバージョン、入出力の SHA-256 を記録します。
 マシン識別情報やローカルパスは含めません。
-二つのバイナリは同じビルドで生成した対として扱います。
+三つのバイナリは同じビルドの組み合わせとして扱います。
 `sysbox-fs` の環境変数 `SYSBOX_PROC_TRANSFER_HELPER` に、信頼する helper の実行ファイルの絶対パスを指定します。
 未設定の場合は従来の proc mount 処理を使用します。
 コンテナの呼び出し元が実行ファイルや環境変数を書き換えられないように管理します。
@@ -197,7 +205,23 @@ CI は静的検査と、公開されている入力からのネイティブコ�
 ### ライセンス
 
 独自の helper、検証コード、ビルドツール、文書には、ルートディレクトリの [MIT ライセンス](LICENSE) を適用します。
-Sysbox のパッチは Apache-2.0 の派生物です。
+パッチの Sysbox 部分は Apache-2.0 の派生物です。
+固定した FUSE library の変更部分は [BSD の表示](LICENSES/bazil-fuse.txt) を保持します。
 upstream の帰属表示とライセンスは [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) と [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に保持しています。
 静的リンクしたバイナリを再配布する場合は、適用される LGPL の義務を含め、第三者のライセンスを別途確認する必要があります。
 ルートディレクトリの MIT ライセンスは、リンクされるすべての依存物を対象にするものではありません。
+
+### sysfs の有効化
+
+Issue #5 は sysfs 用の独立した opt-in 経路を追加します。
+信頼された daemon の環境変数 `SYSBOX_SYSFS_TRANSFER_HELPER` に `sysfs-mount-helper` の絶対パスを指定します。
+未設定時の sysfs dispatch と既存 proc helper のソース、FD 契約を維持します。
+ビルドは三つの binary と manifest を出力し、同じビルドの組み合わせとして管理します。
+新しい sysfs と FUSE 修正の受け入れ条件は既存 proc の取り込み条件から独立しています。
+**AC7 の amd64、6.18.18-talos、Sysbox 0.7.1、bwrap 0.12.0 実環境検証は、talos-sysbox-installer 取り込み時まで deferred/unrun とします。**
+コンパイルや arm64 の補助検査では代替しません。
+
+新しい非 leader の sysfs probe と直接起動の lifecycle fixture は [実行手順](tests/runtime/README.md) を参照してください。
+外側の mask と read-only mount、元の bwrap proc と `/sys` bind 検査を維持します。
+production helper は checkpoint socket を受け付けません。
+installer、ホスト daemon、cluster の設定変更は提供しません。

@@ -10,3 +10,11 @@
 !tests/upstream/proc_policy_test.go
 !tests/unit/
 !tests/unit/lifecycle.c
+!helper/sysfs-mount-helper.c
+!patches/sysfs-transfer.patch
+!tests/upstream/sysfs_policy_test.go
+!tests/upstream/sysfs_snapshot_test.go
+!tests/upstream/sysfs_metadata_test.go
+!tests/upstream/fuse_identity_test.go
+!tests/upstream/sysfs_dentry_test.go
+!tests/upstream/fuse_container_test.go

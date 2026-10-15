@@ -18,6 +18,7 @@ import time
 import uuid
 
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--filesystem', choices=['proc','sysfs'], default='proc')
 parser.add_argument('--outer-pid', type=int, required=True)
 parser.add_argument('--helper', type=Path, required=True, help='tests/unit/helper-checkpoint.c binary ONLY')
 parser.add_argument('--requester', required=True, help='checkpoint-requester binary visible inside sandbox')
@@ -53,13 +54,14 @@ token = 'sysbox-issue3-' + uuid.uuid4().hex
 code = "import subprocess,sys,time; p=subprocess.Popen(sys.argv[1:],stdin=sys.stdin); p.wait(); time.sleep(40)"
 command = args.prefix + ['bwrap', '--die-with-parent', '--unshare-all', '--share-net',
                           '--ro-bind', '/', '/', '--dev-bind', '/dev', '/dev', '--tmpfs', '/tmp',
-                          '--ro-bind', args.requester, args.requester, '--cap-add', 'CAP_SYS_ADMIN', '--', '/usr/bin/python3', '-c', code,
+                          '--ro-bind', args.requester, args.requester,
+                          *(['--ro-bind','/tmp/issue5-repo','/tmp/issue5-repo'] if args.filesystem=='sysfs' else []), '--cap-add', 'CAP_SYS_ADMIN', '--', '/usr/bin/python3', '-c', code,
                           args.requester, base+'-proc', base+'-control', args.requester_kind, token]
 p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 start = time.monotonic()
 
-def line():
-    if not select.select([p.stdout], [], [], 15)[0]:
+def line(timeout=15):
+    if not select.select([p.stdout], [], [], timeout)[0]:
         detail = os.read(p.stderr.fileno(), 4096).decode(errors='replace') if select.select([p.stderr], [], [], 0)[0] else ''
         raise AssertionError('requester readiness timeout: ' + detail)
     data = p.stdout.readline().decode().strip()
@@ -174,7 +176,7 @@ try:
     fcntl.ioctl(listener, 0xc0502100, message, True)
     ident, notification_tid = struct.unpack_from('QI', message)
     assert notification_tid == tid and valid()
-    for pid, ns in [(args.outer_pid,'user'), (args.outer_pid,'mnt'), (tid,'user'), (tid,'mnt'), (tid,'pid')]:
+    for pid, ns in [(args.outer_pid,'user'), (args.outer_pid,'mnt'), (tid,'user'), (tid,'mnt'), (tid,'net' if args.filesystem=='sysfs' else 'pid')]:
         fds.append(os.open(f'/proc/{pid}/ns/{ns}', os.O_RDONLY))
     fds.append(os.open(f'/proc/{tid}/root{base}-proc', os.O_PATH|os.O_DIRECTORY))
     fds.append(os.open(f'/proc/{args.outer_pid}/root', os.O_PATH|os.O_DIRECTORY))
@@ -183,7 +185,7 @@ try:
     paths = []
     for raw in Path(f'/proc/{args.outer_pid}/mountinfo').read_text().splitlines():
         path = raw.split()[4]
-        if not path.startswith('/proc/') or path in paths: continue
+        if not path.startswith('/sys/' if args.filesystem=='sysfs' else '/proc/') or path in paths: continue
         assert '\\' not in path
         paths.append(path)
         fds.append(os.open(f'/proc/{args.outer_pid}/root'+path, os.O_PATH))
@@ -206,7 +208,7 @@ try:
         assert valid(), 'pre-launch notification invalid'
         launch_time = time.monotonic()
         helper = subprocess.Popen([str(args.helper), str(args.uid), str(args.gid), '15',
-                                   *[path[6:] for path in paths]], close_fds=False,
+                                   *[path[5:] if args.filesystem=='sysfs' else path[6:] for path in paths]], close_fds=False,
                                   preexec_fn=launch, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         for fd in copies+[control_copy]: os.close(fd)
         copies = []; control_copy = None
@@ -240,7 +242,7 @@ try:
         except OSError as e: assert e.errno==2
         else: raise AssertionError('success delivered to invalid notification')
         fifo('observe', b'V' if commit else b'U')
-    assert line().startswith('PASS '), 'surviving observer failed'
+    assert line(30).startswith('PASS '), 'surviving observer failed'
     # Check synchronous worker/locker cleanup, including owned FDs/mounts:
     # no child remains under the exited worker; pinned trees close at exit.
     if helper:

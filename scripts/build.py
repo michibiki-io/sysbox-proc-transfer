@@ -11,7 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "build/sources.lock.json"
 COMPONENT_ARGS = {"root": "ROOT_REV", "fs": "FS_REV", "runc": "RUNC_REV",
-                  "ipc": "IPC_REV", "libs": "LIBS_REV"}
+                  "ipc": "IPC_REV", "libs": "LIBS_REV", "fuse": "FUSE_REV"}
 
 
 def sha256(path):
@@ -58,12 +58,12 @@ def elf_architecture(path):
 
 
 def manifest(lock, output):
-    names = ("sysbox-fs", "proc-mount-helper")
+    names = ("sysbox-fs", "proc-mount-helper", "sysfs-mount-helper")
     architectures = {elf_architecture(output / name) for name in names}
     if len(architectures) != 1:
         raise ValueError("paired outputs have different architectures")
     inputs = sorted(set(lock["source_sha256"]) |
-                    {"build/Dockerfile", "build/sources.lock.json", "scripts/build.py", "tests/upstream/proc_policy_test.go"})
+                    {".dockerignore", "build/Dockerfile", "build/sources.lock.json", "scripts/build.py", "tests/upstream/proc_policy_test.go"})
     return {"schema_version": 1, "architecture": architectures.pop(),
             "sources": lock["components"], "builder": lock["builder"],
             "generator": lock["generator"],

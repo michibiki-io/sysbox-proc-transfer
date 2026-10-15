@@ -5,11 +5,12 @@ actor IDs and container-exec prefix; this script does not configure a runtime.
 import argparse
 import os, subprocess, time, pathlib, uuid, signal, fcntl
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--filesystem', choices=['proc','sysfs'], default='proc')
 parser.add_argument('--outer-pid', type=int, required=True)
 parser.add_argument('--helper', type=pathlib.Path, required=True)
 parser.add_argument('--uid', type=int, required=True)
 parser.add_argument('--gid', type=int, required=True)
-parser.add_argument('--mode', choices=['wrong-owner', 'dead-requester', 'unsupported-flags', 'mapped-launcher'], required=True)
+parser.add_argument('--mode', choices=['wrong-owner', 'dead-requester', 'unsupported-flags', 'mapped-launcher', 'wrong-network', 'deeper-user', 'backing-symlink'], required=True)
 parser.add_argument('--exec', dest='prefix', nargs=argparse.REMAINDER, required=True)
 args = parser.parse_args()
 if os.geteuid() != 0 or args.outer_pid <= 1 or args.uid < 0 or args.gid < 0 or not args.prefix:
@@ -35,6 +36,10 @@ if int(sys.argv[1])&1:
 print('PASS sandbox PID identity, locked submounts and masked files',flush=True)
 '''
 procflags='14'
+if args.filesystem=='sysfs':
+ code="import os,sys,time,ctypes; os.mkdir('/tmp/proc-hidden'); " + ("assert ctypes.CDLL(None,use_errno=True).unshare(0x10000000)==0; " if args.mode=='deeper-user' else "") + "time.sleep(120)"
+elif args.mode in ('wrong-network','deeper-user'):
+ parser.error('sysfs-only rejection mode')
 p=subprocess.Popen(prefix+['bwrap','--die-with-parent','--unshare-all','--share-net','--ro-bind','/','/','--dev-bind','/dev','/dev','--tmpfs','/tmp','--cap-add','CAP_SYS_ADMIN','--','/usr/bin/python3','-c',code,procflags,token])
 fds=[]
 mode=args.mode
@@ -55,18 +60,50 @@ try:
   time.sleep(.05)
  else:raise RuntimeError('sandbox directory readiness timeout')
  outer=args.outer_pid
- for pid,n in [(outer,'user'),(outer,'mnt'),(target,'user'),(target,'mnt'),(target,'pid')]:
+ for pid,n in [(outer,'user'),(outer,'mnt'),(target,'user'),(target,'mnt'),(target,'net' if args.filesystem=='sysfs' else 'pid')]:
   fds.append(os.open(f'/proc/{pid}/ns/{n}',os.O_RDONLY))
  fds.append(os.open(f'/proc/{target}/root/tmp/proc-hidden',os.O_PATH|os.O_DIRECTORY))
  fds.append(os.open(f'/proc/{outer}/root',os.O_PATH|os.O_DIRECTORY))
  fds.append(os.pidfd_open(target, 0x80))  # PIDFD_THREAD, matching production FD 10.
  names=[]
- for n in ['uptime','swaps','sys','bus','fs','irq','sysrq-trigger','asound','interrupts','keys','timer_list']:
-  try:f=os.open(f'/proc/{outer}/root/proc/{n}',os.O_PATH)
-  except FileNotFoundError:continue
-  names.append(n);fds.append(f)
+ if args.filesystem=='sysfs':
+  paths=sorted({line.split()[4] for line in pathlib.Path(f'/proc/{outer}/mountinfo').read_text().splitlines() if line.split()[4].startswith('/sys/')})
+  for path in paths:
+   if mode=='backing-symlink' and path=='/sys/devices/virtual':continue
+   names.append(path[5:]);fds.append(os.open(f'/proc/{outer}/root'+path,os.O_PATH))
+ else:
+  for n in ['uptime','swaps','sys','bus','fs','irq','sysrq-trigger','asound','interrupts','keys','timer_list']:
+   try:f=os.open(f'/proc/{outer}/root/proc/{n}',os.O_PATH)
+   except FileNotFoundError:continue
+   names.append(n);fds.append(f)
+ if mode=='backing-symlink':
+  import socket, array, errno
+  receive, send = socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
+  os.close(fds[5]);fds[5]=os.dup(send.fileno())
+  copies=[fcntl.fcntl(f,fcntl.F_DUPFD_CLOEXEC,200) for f in fds]
+  def launch_backing():
+   for i,f in enumerate(copies,3):os.dup2(f,i,inheritable=True)
+  def backing(op,path):
+   return subprocess.run([str(args.helper),str(args.uid),str(args.gid),'15','--'+op+'=devices/virtual/net/'+path,*names],close_fds=False,preexec_fn=launch_backing,capture_output=True,timeout=25)
+  # Final symlinks remain inspectable, but cannot be traversed by the helper.
+  good=backing('lookup','lo/subsystem')
+  assert good.returncode==0,good.stderr
+  _,ancillary,_,_=receive.recvmsg(1,socket.CMSG_SPACE(4))
+  rights=array.array('i');rights.frombytes(ancillary[0][2])
+  try:assert os.readlink('',dir_fd=rights[0])=='../../../../class/net'
+  finally:
+   for fd in rights:os.close(fd)
+  for op in ('lookup','open'):
+   for path in ('lo/subsystem/lo','lo/subsystem/lo/subsystem'):
+    rejected=backing(op,path)
+    assert rejected.returncode==errno.ELOOP,(op,path,rejected.returncode,rejected.stderr)
+    assert b'open network backing resource' in rejected.stderr,rejected.stderr
+  receive.close();send.close()
+  print('PASS backing symlink traversal rejected; final Readlink preserved',flush=True)
+  raise SystemExit(0)
  # Duplicate safely: original descriptors may overlap destination numbers.
  if mode=='wrong-owner':os.close(fds[3]);fds[3]=os.dup(fds[1])
+ if mode=='wrong-network':os.close(fds[4]);fds[4]=os.open('/proc/self/ns/net',os.O_RDONLY)
  if mode=='dead-requester':signal.pidfd_send_signal(fds[7],signal.SIGKILL)
  copies=[__import__('fcntl').fcntl(f,__import__('fcntl').F_DUPFD_CLOEXEC,200) for f in fds]
  def launch():
@@ -78,14 +115,16 @@ try:
  expected={
   'wrong-owner':(b'requester mount owner',),
   'dead-requester':(b'requester alive',),
-  'unsupported-flags':(b'supported proc flags',),
+  'unsupported-flags':(b'supported sysfs flags' if args.filesystem=='sysfs' else b'supported proc flags',),
   'mapped-launcher':(b'outer user parent',b'trusted parent-user launcher'),
+  'wrong-network':(b'requester or outer network owner',),
+  'deeper-user':(b'direct child user namespace',),
  }[mode]
  assert any(reason in stderr for reason in expected),(mode,'unexpected rejection',stderr.decode(errors='replace'))
  result=r.returncode
  if mode:
   assert result!=0,('negative request accepted',mode)
-  if mode!='dead-requester':assert not pathlib.Path(f'/proc/{target}/root/tmp/proc-hidden/1').exists(),'failed request changed target'
+  if mode!='dead-requester':assert not pathlib.Path(f'/proc/{target}/root/tmp/proc-hidden/'+('class' if args.filesystem=='sysfs' else '1')).exists(),'failed request changed target'
   print('PASS fail-closed '+mode,flush=True)
   raise SystemExit(0)
 finally:

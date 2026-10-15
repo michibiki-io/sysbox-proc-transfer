@@ -7,7 +7,7 @@
 
 ## English
 
-`patches/proc-transfer.patch` modifies Sysbox v0.7.1 `sysbox-fs` and the `sysbox-runc` namespace-entry source linked into it. These changes are Apache-2.0 derivatives. The patch is a prominent record of modifications; applying it retains existing upstream file copyright/license headers. The upstream Sysbox license, including **Copyright 2020 Nestybox, Inc.**, is reproduced unchanged in `LICENSES/Apache-2.0.txt`. Public source repositories and immutable component revisions are recorded in `build/sources.lock.json`.
+`patches/proc-transfer.patch` and `patches/sysfs-transfer.patch` modify Sysbox v0.7.1 `sysbox-fs` and the `sysbox-runc` namespace-entry source linked into it. The Sysbox changes are Apache-2.0 derivatives. The sysfs patch also modifies the pinned nestybox/fuse `bazil/fs/serve.go`; that portion retains its BSD terms and Tommi Virtanen / Go Authors copyright notices in [LICENSES/bazil-fuse.txt](LICENSES/bazil-fuse.txt). The patch is a prominent record of modifications; applying it retains existing upstream file copyright/license headers. The upstream Sysbox license, including **Copyright 2020 Nestybox, Inc.**, is reproduced unchanged in `LICENSES/Apache-2.0.txt`. Public source repositories and immutable component revisions are recorded in `build/sources.lock.json`.
 
 The independently authored C helper, portable validation programs, packaging scripts and documentation use the root MIT license, Copyright (c) 2026 michibiki.io. This does not relicense upstream Sysbox, its dependencies or generated protobuf code.
 
@@ -15,7 +15,9 @@ No prebuilt binaries are distributed in this issue. A packager redistributing th
 
 ## 日本語
 
-`patches/proc-transfer.patch` は Sysbox v0.7.1 の `sysbox-fs` と、そこにリンクする `sysbox-runc` namespace-entry source を変更する Apache-2.0 の派生物です。
+`patches/proc-transfer.patch` と `patches/sysfs-transfer.patch` は Sysbox v0.7.1 の `sysbox-fs` と、そこにリンクする `sysbox-runc` namespace-entry source を変更する Apache-2.0 の派生物です。
+sysfs patch は固定した nestybox/fuse の `bazil/fs/serve.go` も変更します。
+この部分の BSD 条項と Tommi Virtanen / Go Authors の著作権表示は [LICENSES/bazil-fuse.txt](LICENSES/bazil-fuse.txt) に保持します。
 patch が変更箇所を明示し、適用時には upstream file の copyright/license header を保持します。
 **Copyright 2020 Nestybox, Inc.** を含む upstream Sysbox license は、`LICENSES/Apache-2.0.txt` に変更せず収録しています。
 公開 source repository と固定 component revision は `build/sources.lock.json` に記録しています。

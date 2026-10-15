@@ -1,0 +1,1615 @@
+diff --git a/sysbox-fs/bazil/fs/serve.go b/sysbox-fs/bazil/fs/serve.go
+--- a/sysbox-fs/bazil/fs/serve.go
++++ b/sysbox-fs/bazil/fs/serve.go
+@@ -103,6 +103,12 @@
+ 	Attr(ctx context.Context, attr *fuse.Attr) error
+ }
+ 
++// NodeLookupIdentity preserves protocol identity while each Lookup supplies a
++// fresh attribute snapshot. It does not cache lookup results or resource data.
++type NodeLookupIdentity interface {
++	LookupIdentityNode() Node
++}
++
+ type NodeGetattrer interface {
+ 	// Getattr obtains the standard metadata for the receiver.
+ 	// It should store that metadata in resp.
+@@ -285,6 +291,12 @@
+ 
+ type HandleReadAller interface {
+ 	ReadAll(ctx context.Context) ([]byte, error)
++}
++
++// HandleReadDirAllUncached opts namespace-dependent directories out of the
++// per-handle data cache. Each request must use its actual requester metadata.
++type HandleReadDirAllUncached interface {
++	ReadDirAllUncached() bool
+ }
+ 
+ type HandleReadDirAller interface {
+@@ -571,13 +583,19 @@
+ 	c.meta.Lock()
+ 	defer c.meta.Unlock()
+ 
+-	if id, ok := c.nodeRef[node]; ok {
++	key := node
++	if provider, ok := node.(NodeLookupIdentity); ok {
++		if identity := provider.LookupIdentityNode(); identity != nil {
++			key = identity
++		}
++	}
++	if id, ok := c.nodeRef[key]; ok {
+ 		sn := c.node[id]
+ 		sn.refs++
+ 		return id, sn.generation
+ 	}
+ 
+-	sn := &serveNode{inode: inode, node: node, refs: 1}
++	sn := &serveNode{inode: inode, node: key, refs: 1}
+ 	if n := len(c.freeNode); n > 0 {
+ 		id = c.freeNode[n-1]
+ 		c.freeNode = c.freeNode[:n-1]
+@@ -588,7 +606,7 @@
+ 		c.node = append(c.node, sn)
+ 	}
+ 	sn.generation = c.nodeGen
+-	c.nodeRef[node] = id
++	c.nodeRef[key] = id
+ 	return id, sn.generation
+ }
+ 
+@@ -1077,6 +1095,9 @@
+ 			if err := n.Getattr(ctx, r, s); err != nil {
+ 				return err
+ 			}
++			if s.Attr.Inode == 0 {
++				s.Attr.Inode = snode.inode
++			}
+ 		} else {
+ 			if err := snode.attr(ctx, &s.Attr); err != nil {
+ 				return err
+@@ -1378,13 +1399,17 @@
+ 		s := &fuse.ReadResponse{Data: make([]byte, 0, r.Size)}
+ 		if r.Dir {
+ 			if h, ok := handle.(HandleReadDirAller); ok {
++				uncached := false
++				if policy, ok := handle.(HandleReadDirAllUncached); ok {
++					uncached = policy.ReadDirAllUncached()
++				}
+ 				// detect rewinddir(3) or similar seek and refresh
+ 				// contents
+-				if r.Offset == 0 {
++				if !uncached && r.Offset == 0 {
+ 					shandle.readData = nil
+ 				}
+ 
+-				if shandle.readData == nil {
++				if uncached || shandle.readData == nil {
+ 					dirs, err := h.ReadDirAll(ctx, r)
+ 					if err != nil {
+ 						return err
+@@ -1395,6 +1420,12 @@
+ 							dir.Inode = c.dynamicInode(snode.inode, dir.Name)
+ 						}
+ 						data = fuse.AppendDirent(data, dir)
++					}
++					if uncached {
++						fuseutil.HandleRead(r, s, data)
++						done(s)
++						r.Respond(s)
++						return nil
+ 					}
+ 					shandle.readData = data
+ 				}
+diff --git a/sysbox-fs/domain/sysfs.go b/sysbox-fs/domain/sysfs.go
+new file mode 100644
+--- /dev/null
++++ b/sysbox-fs/domain/sysfs.go
+@@ -0,0 +1,25 @@
++// Copyright 2026 michibiki.io.
++// SPDX-License-Identifier: Apache-2.0
++
++package domain
++
++// SysfsProtection is immutable registration-time mount metadata. Every source
++// must still match its registered mount ID and flag floor when acquired.
++// Registration capture does not collect inodes (Inode is normally zero); the
++// helper compares pinned source FD device/inode with its clone at use time.
++type SysfsProtection struct {
++	Path             string
++	MountID          int
++	Inode            Inode
++	Emulated         bool
++	FsType           string
++	Root             string
++	Flags            uint64
++	ReadonlyNetAlias bool
++}
++
++// SysfsNetworkPath is deliberately limited to the existing virtual-net handler.
++func SysfsNetworkPath(path string) bool {
++	const base = "/sys/devices/virtual/net"
++	return path == base || (len(path) > len(base) && path[:len(base)+1] == base+"/")
++}
+diff --git a/sysbox-fs/fuse/dir.go b/sysbox-fs/fuse/dir.go
+--- a/sysbox-fs/fuse/dir.go
++++ b/sysbox-fs/fuse/dir.go
+@@ -18,10 +18,12 @@
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
++	"syscall"
+ 	"time"
+ 
+ 	"github.com/nestybox/sysbox-fs/domain"
+@@ -89,14 +91,14 @@
+ 	//     user-ns as long as user-ns-nesting continue to be unsupported).
+ 	d.server.RLock()
+ 	node, ok := d.server.nodeDB[path]
+-	if ok {
++	if ok && !networkUncached(path) {
+ 		d.server.RUnlock()
+ 		return *node, nil
+ 	}
+ 	d.server.RUnlock()
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -121,12 +123,22 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(path),
+ 	}
+ 
+ 	// Handler execution.
+ 	info, err := handler.Lookup(ionode, handlerReq)
+ 	if err != nil {
++		if networkUncached(ionode.Path()) {
++			// Invalidating a positive FUSE dentry detaches its submounts in
++			// every namespace. Preserve only registered protection identities;
++			// Getattr and all resource operations still authorize the caller.
++			if node, protected := d.server.networkProtectionLookup(handlerReq); protected {
++				resp.EntryValid = 0
++				return node, nil
++			}
++			return nil, networkError(err)
++		}
+ 		return nil, fuse.ENOENT
+ 	}
+ 
+@@ -163,14 +175,23 @@
+ 		newNode = NewFile(handlerReq, &fuseAttrs, d.File.server)
+ 	}
+ 
++	if networkUncached(path) {
++		newNode = d.server.networkLookupNode(handlerReq, &fuseAttrs, info)
++	}
++
+ 	// Insert new fs node into nodeDB.
+ 	d.server.Lock()
+-	d.server.nodeDB[path] = &newNode
++	if !networkUncached(path) {
++		d.server.nodeDB[path] = &newNode
++	}
+ 	d.server.Unlock()
+ 
+ 	// Adjust response to carry the largest dentry-cache-timeout value
+ 	// possible to reduce lookups() to the minimum.
+ 	resp.EntryValid = time.Duration(DentryCacheTimeout)
++	if networkUncached(path) {
++		resp.EntryValid = 0
++	}
+ 
+ 	return newNode, nil
+ }
+@@ -182,7 +203,7 @@
+ 	resp *fuse.OpenResponse) (fs.Handle, error) {
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -205,15 +226,15 @@
+ 
+ 	logrus.Debugf("Requested Create() operation for entry %v (req ID=%#x)", req.Name, uint64(req.ID))
+ 
++	path := filepath.Join(d.path, req.Name)
++
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+ 			req.Pid)
+ 	}
+-
+-	path := filepath.Join(d.path, req.Name)
+ 
+ 	// New ionode reflecting the path of the element to be created.
+ 	ionode := d.server.service.ios.NewIOnode(req.Name, path, 0)
+@@ -234,7 +255,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(path),
+ 	}
+ 
+ 	// Handler execution. 'Open' handler will create new element if requesting
+@@ -282,7 +303,7 @@
+ 	logrus.Debugf("Requested ReadDirAll() on directory %v (req ID=%#v)", d.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -305,13 +326,16 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: d.server.container,
++		Container: d.server.requestContainer(d.path),
+ 	}
+ 
+ 	// Handler execution.
+ 	files, err := handler.ReadDirAll(ionode, handlerReq)
+ 	if err != nil {
+ 		logrus.Debugf("ReadDirAll() error: %v", err)
++		if networkUncached(ionode.Path()) {
++			return nil, networkError(err)
++		}
+ 		return nil, fuse.ENOENT
+ 	}
+ 
+@@ -349,7 +373,7 @@
+ 	logrus.Debugf("Requested Mkdir() on directory %v (Req ID=%#v)", req.Name, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if d.server.container == nil {
++	if d.server.requestContainer(d.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -373,3 +397,104 @@
+ 
+ 	d.File.Forget()
+ }
++
++// Errors with a genuine missing path keep hiding semantics. Operational errors
++// are not ENOENT: libc readdir treats that errno as a successful empty result.
++func networkError(err error) error {
++	var e syscall.Errno
++	if errors.As(err, &e) {
++		return fuse.Errno(e)
++	}
++	return fuse.EIO
++}
++func networkUncached(path string) bool {
++	return os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER") != "" && domain.SysfsNetworkPath(path)
++}
++
++// ReadDirAllUncached prevents per-handle directory data from crossing Network namespaces.
++func (d *Dir) ReadDirAllUncached() bool { return networkUncached(d.path) }
++
++// Stable FUSE identities keep native OCI submounts attached to their covered
++// dentries even with TTL0 and per-request metadata refresh. Never reuse nodeDB
++// lookup results. The fresh node carries only this request's checked attributes;
++// the retained identity's Getattr/Read/Open dispatch still reauthorizes each PID.
++func (s *fuseServer) networkLookupNode(req *domain.HandlerRequest, attr *fuse.Attr, info os.FileInfo) fs.Node {
++	s.Lock()
++	defer s.Unlock()
++	if s.networkIdentities == nil {
++		s.networkIdentities = make(map[string]fs.Node)
++	}
++	identity := s.networkIdentities[req.Path]
++	kind := os.FileMode(0)
++	if identity != nil {
++		kind = identity.(interface{ Mode() os.FileMode }).Mode().Type()
++		attr.Inode = identity.(interface{ LookupProtocolInode() uint64 }).LookupProtocolInode()
++	} else if info.IsDir() {
++		kind = os.ModeDir
++	} else if info.Mode()&os.ModeSymlink != 0 {
++		kind = os.ModeSymlink
++	}
++	attr.Mode = attr.Mode & ^os.ModeType | kind
++	var fresh fs.Node
++	var file *File
++	if kind&os.ModeDir != 0 {
++		dir := NewDir(req, attr, s)
++		fresh = dir
++		file = &dir.File
++	} else {
++		file = NewFile(req, attr, s)
++		fresh = file
++	}
++	if identity == nil {
++		identity = fresh
++		s.networkIdentities[req.Path] = identity
++	}
++	file.lookupIdentity = identity
++	return fresh
++}
++
++// networkProtectionLookup keeps a mounted protection's covered dentry valid when
++// this caller cannot obtain its network view. It returns immutable, read-only
++// traversal metadata, never a saved view or resource attributes. Mounted dentries
++// pin the existing protocol identity; an unknown identity is not manufactured.
++func (s *fuseServer) networkProtectionLookup(req *domain.HandlerRequest) (fs.Node, bool) {
++	if req.Container == nil {
++		return nil, false
++	}
++	snapshot, ok := req.Container.(interface {
++		SysfsSourceAncestor(string) (bool, bool, uint32, uint32)
++	})
++	if !ok {
++		return nil, false
++	}
++	ready, ancestor, _, _ := snapshot.SysfsSourceAncestor(req.Path)
++	if !ready || !ancestor {
++		return nil, false
++	}
++	s.RLock()
++	identity := s.networkIdentities[req.Path]
++	s.RUnlock()
++	if identity == nil {
++		return nil, false
++	}
++	kind := identity.(interface{ Mode() os.FileMode }).Mode().Type()
++	mode := os.FileMode(0444)
++	if kind&os.ModeDir != 0 {
++		mode = 0555
++	} else if kind&os.ModeSymlink != 0 {
++		mode = 0555
++	}
++	attr := &fuse.Attr{Inode: identity.(interface{ LookupProtocolInode() uint64 }).LookupProtocolInode(), Mode: kind | mode, Nlink: 1}
++	req.SkipIdRemap = true // immutable host-root metadata remains nobody in the container
++	var node fs.Node
++	var file *File
++	if kind&os.ModeDir != 0 {
++		dir := NewDir(req, attr, s)
++		node, file = dir, &dir.File
++	} else {
++		file = NewFile(req, attr, s)
++		node = file
++	}
++	file.lookupIdentity = identity
++	return node, true
++}
+diff --git a/sysbox-fs/fuse/file.go b/sysbox-fs/fuse/file.go
+--- a/sysbox-fs/fuse/file.go
++++ b/sysbox-fs/fuse/file.go
+@@ -42,7 +42,8 @@
+ 	attr *fuse.Attr
+ 
+ 	// Skip remapping uid/gid values.
+-	skipIdRemap bool
++	skipIdRemap    bool
++	lookupIdentity fs.Node
+ 
+ 	// Pointer to parent fuseService hosting this file/dir.
+ 	server *fuseServer
+@@ -97,7 +98,7 @@
+ 	// (around 1/3rd extra file-ops), but that's the price to pay to be able
+ 	// to offer a consistent experience: users will always see the proper
+ 	// node attrs, regardless of the timing of the incoming file-ops.
+-	if !f.server.IsCntrRegCompleted() {
++	if networkUncached(f.path) || !f.server.IsCntrRegCompleted() {
+ 		a.Valid = time.Duration(0)
+ 	} else {
+ 		a.Valid = time.Duration(AttribCacheTimeout)
+@@ -118,7 +119,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return nil, fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -140,7 +141,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -214,7 +215,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -237,7 +238,7 @@
+ 		Gid:       req.Gid,
+ 		Offset:    req.Offset,
+ 		Data:      make([]byte, req.Size),
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -261,7 +262,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -283,7 +284,7 @@
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+ 		Data:      req.Data,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -305,7 +306,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)", req.Pid)
+ 		return "", fmt.Errorf("Could not find container originating this request (pid %v)", req.Pid)
+ 	}
+@@ -324,7 +325,7 @@
+ 		Pid:       req.Pid,
+ 		Uid:       req.Uid,
+ 		Gid:       req.Gid,
+-		Container: f.server.container,
++		Container: f.server.requestContainer(f.path),
+ 	}
+ 
+ 	// Handler execution.
+@@ -347,7 +348,7 @@
+ 		f.path, uint64(req.ID))
+ 
+ 	// Ensure operation is generated from within a registered sys container.
+-	if f.server.container == nil {
++	if f.server.requestContainer(f.path) == nil {
+ 		logrus.Errorf("Could not find the container originating this request (pid %v)",
+ 			req.Pid)
+ 		return fmt.Errorf("Could not find container originating this request (pid %v)",
+@@ -372,6 +373,12 @@
+ 	f.server.Lock()
+ 	defer f.server.Unlock()
+ 
++	if networkUncached(f.path) {
++		if f.server.networkIdentities[f.path] == f.lookupIdentity {
++			delete(f.server.networkIdentities, f.path)
++		}
++		return
++	}
+ 	if _, ok := f.server.nodeDB[f.path]; !ok {
+ 		return
+ 	}
+@@ -438,3 +445,44 @@
+ 
+ 	return a
+ }
++
++// Getattr carries the actual FUSE caller (Attr has no request PID). Refresh the
++// virtual-net metadata even when another caller has already obtained this node.
++func (f *File) Getattr(ctx context.Context, req *fuse.GetattrRequest, resp *fuse.GetattrResponse) error {
++	if !networkUncached(f.path) {
++		return f.Attr(ctx, &resp.Attr)
++	}
++	if f.server.requestContainer(f.path) == nil {
++		return fuse.EIO
++	}
++	n := f.server.service.ios.NewIOnode(f.name, f.path, 0)
++	handler, ok := f.server.service.hds.LookupHandler(n)
++	if !ok {
++		return fuse.EIO
++	}
++	hr := &domain.HandlerRequest{ID: uint64(req.ID), Path: f.path, Name: f.name, Pid: req.Pid, Uid: req.Uid, Gid: req.Gid, Container: f.server.requestContainer(f.path)}
++	info, err := handler.Lookup(n, hr)
++	if err != nil {
++		return networkError(err)
++	}
++	a := convertFileInfoToFuse(info)
++	a.Mode = info.Mode() & ^os.ModeType | f.attr.Mode.Type()
++	a.Valid = 0
++	a.Inode = f.attr.Inode
++	if !hr.SkipIdRemap {
++		prs := f.server.service.hds.ProcessService()
++		p := prs.ProcessCreate(req.Pid, req.Uid, req.Gid)
++		a.Uid, a.Gid, err = p.UsernsRootUidGid()
++		if err != nil {
++			return networkError(err)
++		}
++	}
++	resp.Attr = a
++	return nil
++}
++
++// Only node identity and the immutable covered inode kind are retained. Attr
++// on a fresh lookup node is request-local; subsequent Getattr/IO use actual PID.
++func (f *File) LookupIdentityNode() fs.Node { return f.lookupIdentity }
++
++func (f *File) LookupProtocolInode() uint64 { return f.attr.Inode }
+diff --git a/sysbox-fs/fuse/server.go b/sysbox-fs/fuse/server.go
+--- a/sysbox-fs/fuse/server.go
++++ b/sysbox-fs/fuse/server.go
+@@ -32,19 +32,21 @@
+ 
+ // FuseServer class in charge of running/hosting sysbox-fs' FUSE server features.
+ type fuseServer struct {
+-	sync.RWMutex                          // nodeDB protection
+-	conn         *bfuse.Conn              // Associated fuse connection
+-	path         string                   // fs path to emulate -- "/" by default
+-	mountPoint   string                   // mountpoint -- "/var/lib/sysboxfs" by default
+-	container    domain.ContainerIface    // associated sys container
+-	containerUid uint32                   // container UID for caching purposes
+-	containerGid uint32                   // container GID for caching purposes
+-	server       *bfusefs.Server          // bazil-fuse server instance
+-	nodeDB       map[string]*bfusefs.Node // map to store all fs nodes, e.g. "/proc/uptime" -> File
+-	root         *Dir                     // root node of fuse fs -- "/" by default
+-	initDone     chan bool                // sync-up channel to alert about fuse-server's init-completion
+-	cntrReg      bool                     // flag to track the container's registration state
+-	service      *FuseServerService       // backpointer to parent service
++	sync.RWMutex                               // nodeDB protection
++	conn              *bfuse.Conn              // Associated fuse connection
++	path              string                   // fs path to emulate -- "/" by default
++	mountPoint        string                   // mountpoint -- "/var/lib/sysboxfs" by default
++	container         domain.ContainerIface    // shared emulation state
++	serveContainer    domain.ContainerIface    // owning container for scoped network requests
++	containerUid      uint32                   // container UID for caching purposes
++	containerGid      uint32                   // container GID for caching purposes
++	server            *bfusefs.Server          // bazil-fuse server instance
++	nodeDB            map[string]*bfusefs.Node // map to store all fs nodes, e.g. "/proc/uptime" -> File
++	networkIdentities map[string]bfusefs.Node  // protocol identity only, not lookup attributes/data
++	root              *Dir                     // root node of fuse fs -- "/" by default
++	initDone          chan bool                // sync-up channel to alert about fuse-server's init-completion
++	cntrReg           bool                     // flag to track the container's registration state
++	service           *FuseServerService       // backpointer to parent service
+ }
+ 
+ func NewFuseServer(
+@@ -52,12 +54,16 @@
+ 	mountpoint string,
+ 	container domain.ContainerIface,
+ 	service *FuseServerService) domain.FuseServerIface {
+-
++	return newFuseServer(path, mountpoint, container, container, service)
++}
++
++func newFuseServer(path, mountpoint string, stateCntr, serveCntr domain.ContainerIface, service *FuseServerService) *fuseServer {
+ 	srv := &fuseServer{
+-		path:       path,
+-		mountPoint: mountpoint,
+-		container:  container,
+-		service:    service,
++		path:           path,
++		mountPoint:     mountpoint,
++		container:      stateCntr,
++		serveContainer: serveCntr,
++		service:        service,
+ 	}
+ 
+ 	return srv
+@@ -186,6 +192,7 @@
+ 
+ 	// Unset pointers for GC purposes.
+ 	s.container = nil
++	s.serveContainer = nil
+ 	s.server = nil
+ 	s.root = nil
+ 	s.service = nil
+@@ -247,3 +254,13 @@
+ func (s *fuseServer) IsCntrRegCompleted() bool {
+ 	return s.cntrReg
+ }
++
++// Shared emulation state remains unchanged. Scoped network acquisition and
++// protection metadata must use this server's owner, even after the first
++// container sharing the state has exited.
++func (s *fuseServer) requestContainer(path string) domain.ContainerIface {
++	if networkUncached(path) {
++		return s.serveContainer
++	}
++	return s.container
++}
+diff --git a/sysbox-fs/fuse/service.go b/sysbox-fs/fuse/service.go
+--- a/sysbox-fs/fuse/service.go
++++ b/sysbox-fs/fuse/service.go
+@@ -108,10 +108,11 @@
+ 		return errors.New("FuseServer with invalid mountpoint")
+ 	}
+ 
+-	srv := NewFuseServer(
++	srv := newFuseServer(
+ 		"/",
+ 		cntrMountpoint,
+ 		stateCntr,
++		serveCntr,
+ 		fss,
+ 	)
+ 
+@@ -129,7 +130,7 @@
+ 
+ 	// Store newly created fuse-server.
+ 	fss.Lock()
+-	fss.serversMap[cntrId] = srv.(*fuseServer)
++	fss.serversMap[cntrId] = srv
+ 	fss.Unlock()
+ 
+ 	logrus.Debugf("Created fuse server for container %s", cntrId)
+diff --git a/sysbox-fs/handler/implementations/passThrough.go b/sysbox-fs/handler/implementations/passThrough.go
+--- a/sysbox-fs/handler/implementations/passThrough.go
++++ b/sysbox-fs/handler/implementations/passThrough.go
+@@ -60,6 +60,12 @@
+ func (h *PassThrough) Lookup(
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest) (os.FileInfo, error) {
++	if info, handled, err := networkSourceLookup(n.Path(), req); handled {
++		return info, err
++	}
++	if sysfsNetworkEnabled(n.Path(), req) {
++		return h.networkLookup(n, req)
++	}
+ 
+ 	logrus.Debugf("Executing Lookup() for req-id: %#x, handler: %s, resource: %s",
+ 		req.ID, h.Name, n.Name())
+@@ -127,6 +133,9 @@
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest,
+ 	namespaces []domain.NStype) (bool, error) {
++	if sysfsNetworkEnabled(n.Path(), req) {
++		return h.networkOpen(n, req)
++	}
+ 
+ 	logrus.Debugf("Executing Open() for req-id: %#x, handler: %s, resource: %s",
+ 		req.ID, h.Name, n.Name())
+@@ -185,6 +194,14 @@
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest,
+ 	namespaces []domain.NStype) (int, error) {
++	if sysfsNetworkEnabled(n.Path(), req) {
++		f, err := h.networkResource(n, req, "open")
++		if err != nil {
++			return 0, err
++		}
++		defer f.Close()
++		return f.ReadAt(req.Data, req.Offset)
++	}
+ 
+ 	var (
+ 		sz  int
+@@ -329,6 +346,14 @@
+ func (h *PassThrough) ReadDirAll(
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest) ([]os.FileInfo, error) {
++	if sysfsNetworkEnabled(n.Path(), req) {
++		f, err := h.networkResource(n, req, "open")
++		if err != nil {
++			return nil, err
++		}
++		defer f.Close()
++		return f.Readdir(-1)
++	}
+ 
+ 	logrus.Debugf("Executing ReadDirAll() for req-id: %#x, handler: %s, resource: %s",
+ 		req.ID, h.Name, n.Name())
+@@ -383,6 +408,19 @@
+ func (h *PassThrough) ReadLink(
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest) (string, error) {
++	if sysfsNetworkEnabled(n.Path(), req) {
++		f, err := h.networkResource(n, req, "lookup")
++		if err != nil {
++			return "", err
++		}
++		defer f.Close()
++		b := make([]byte, 4096)
++		size, err := unix.Readlinkat(int(f.Fd()), "", b)
++		if err != nil {
++			return "", err
++		}
++		return string(b[:size]), nil
++	}
+ 
+ 	logrus.Debugf("Executing ReadLink() for req-id: %#x, handler: %s, resource: %s",
+ 		req.ID, h.Name, n.Name())
+diff --git a/sysbox-fs/handler/implementations/sysDevicesVirtual.go b/sysbox-fs/handler/implementations/sysDevicesVirtual.go
+--- a/sysbox-fs/handler/implementations/sysDevicesVirtual.go
++++ b/sysbox-fs/handler/implementations/sysDevicesVirtual.go
+@@ -129,6 +129,9 @@
+ func (h *SysDevicesVirtual) Open(
+ 	n domain.IOnodeIface,
+ 	req *domain.HandlerRequest) (bool, error) {
++	if sysfsNetworkEnabled(n.Path(), req) {
++		return h.Service.GetPassThroughHandler().Open(n, req)
++	}
+ 
+ 	logrus.Debugf("Executing Open() for req-id: %#x, handler: %s, resource: %s",
+ 		req.ID, h.Name, n.Name())
+diff --git a/sysbox-fs/handler/implementations/sysfsNetwork.go b/sysbox-fs/handler/implementations/sysfsNetwork.go
+new file mode 100644
+--- /dev/null
++++ b/sysbox-fs/handler/implementations/sysfsNetwork.go
+@@ -0,0 +1,93 @@
++// Copyright 2026 michibiki.io.
++// SPDX-License-Identifier: Apache-2.0
++
++package implementations
++
++import (
++	"os"
++	"path/filepath"
++	"syscall"
++	"time"
++
++	"github.com/nestybox/sysbox-fs/domain"
++	"github.com/nestybox/sysbox-fs/sysfstransfer"
++	"github.com/sirupsen/logrus"
++)
++
++func sysfsNetworkEnabled(path string, req *domain.HandlerRequest) bool {
++	return req.Container != nil && !req.Container.Ctime().IsZero() && os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER") != "" && domain.SysfsNetworkPath(path)
++}
++func (h *PassThrough) networkResource(n domain.IOnodeIface, req *domain.HandlerRequest, operation string) (*os.File, error) {
++	f, err := sysfstransfer.OpenBacking(req.Container, req.Pid, req.Uid, req.Gid, n.Path(), operation, os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER"), h.Service.NSenterService())
++	if err != nil {
++		logrus.Warnf("sysfs-backing tid=%d path=%s: %v", req.Pid, n.Path(), err)
++		return nil, sysfstransfer.Errno(err)
++	}
++	return f, nil
++}
++func (h *PassThrough) networkLookup(n domain.IOnodeIface, req *domain.HandlerRequest) (os.FileInfo, error) {
++	f, err := h.networkResource(n, req, "lookup")
++	if err != nil {
++		return nil, err
++	}
++	defer f.Close()
++	info, err := f.Stat()
++	if err != nil {
++		return nil, err
++	}
++	// fstat runs in the daemon User namespace. Preserve SysDevicesVirtual's
++	// SkipIdRemap policy: host root IDs become nobody in the mapped container,
++	// rather than advertising the mapped Network owner's IDs as caller-owned.
++	stat, ok := info.Sys().(*syscall.Stat_t)
++	if !ok {
++		return nil, syscall.EIO
++	}
++	normalized := *stat
++	normalized.Uid, normalized.Gid = 0, 0
++	req.SkipIdRemap = true
++	return domain.FileInfo{Fname: info.Name(), Fsize: info.Size(), Fmode: info.Mode(), FmodTime: info.ModTime(), FisDir: info.IsDir(), Fsys: &normalized}, nil
++}
++func (h *PassThrough) networkOpen(n domain.IOnodeIface, req *domain.HandlerRequest) (bool, error) {
++	// Preserve the virtual-net handler's absence of write privileges. This path
++	// cannot open writable descriptors, create files or follow symlinks out of net.
++	if n.OpenFlags()&(syscall.O_ACCMODE|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_APPEND) != 0 {
++		return false, syscall.EACCES
++	}
++	f, err := h.networkResource(n, req, "open")
++	if err != nil {
++		return false, err
++	}
++	f.Close()
++	return false, nil
++}
++
++// A host-root inode worker traverses FUSE on behalf of trusted source pinning.
++// It cannot construct a caller network view (its User namespace is the host).
++// Return synthetic directory metadata only for ancestors of registered mounts;
++// the final source itself is a native submount and is verified by mount ID/FD.
++// This path performs no mounts, reads, enumeration, symlink or write operations.
++func networkSourceLookup(path string, req *domain.HandlerRequest) (os.FileInfo, bool, error) {
++	if os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER") == "" || req.Container == nil || !domain.SysfsNetworkPath(path) {
++		return nil, false, nil
++	}
++	snapshot, ok := req.Container.(interface {
++		SysfsSourceAncestor(string) (bool, bool, uint32, uint32)
++	})
++	if !ok {
++		return nil, false, nil
++	}
++	ready, ancestor, uid, gid := snapshot.SysfsSourceAncestor(path)
++	if !ready {
++		return nil, false, nil
++	} // unchanged trusted pre-exec bootstrap
++	host := req.Uid == 0 && req.Gid == 0
++	constructor := req.Uid == uid && req.Gid == gid && sysfstransfer.OwnMetadataConstructor(req.Pid)
++	if !host && !constructor {
++		return nil, false, nil
++	}
++	if !ancestor || !sysfstransfer.OwnMetadataTask(req.Pid) {
++		return nil, true, syscall.EPERM
++	}
++	req.SkipIdRemap = true
++	return domain.FileInfo{Fname: filepath.Base(path), Fmode: os.ModeDir | 0555, FisDir: true, FmodTime: time.Now()}, true, nil
++}
+diff --git a/sysbox-fs/mount/infoParser.go b/sysbox-fs/mount/infoParser.go
+--- a/sysbox-fs/mount/infoParser.go
++++ b/sysbox-fs/mount/infoParser.go
+@@ -48,13 +48,13 @@
+ 	"bufio"
+ 	"bytes"
+ 	"fmt"
++	"golang.org/x/sys/unix"
+ 	"io/ioutil"
+ 	"strconv"
+ 	"strings"
+ 
+ 	"github.com/nestybox/sysbox-fs/domain"
+ 	"github.com/sirupsen/logrus"
+-	"golang.org/x/sys/unix"
+ )
+ 
+ // mountInfoParser holds info about a process' mountpoints, and can be queried
+@@ -1067,3 +1067,32 @@
+ 
+ 	return 0
+ }
++
++// SysfsPolicy snapshots all sysfs mounts, including OCI masks, read-only paths
++// and submounts nested beneath emulation. The registered parser is immutable.
++func (mi *mountInfoParser) SysfsPolicy() []domain.SysfsProtection {
++	var result []domain.SysfsProtection
++	for path, info := range mi.mpInfo {
++		if path != "/sys" && !strings.HasPrefix(path, "/sys/") {
++			continue
++		}
++		flags := uint64(0)
++		for name, bit := range map[string]uint64{"ro": unix.MS_RDONLY, "nosuid": unix.MS_NOSUID, "nodev": unix.MS_NODEV, "noexec": unix.MS_NOEXEC} {
++			for _, options := range []map[string]string{info.Options, info.VfsOptions} {
++				if _, ok := options[name]; ok {
++					flags |= bit
++				}
++			}
++		}
++		emulated := false
++		for _, managed := range SysfsMounts {
++			if managed == path {
++				emulated = true
++				break
++			}
++		}
++		decoded := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(path)
++		result = append(result, domain.SysfsProtection{Path: decoded, MountID: info.MountID, Inode: info.MpInode, FsType: info.FsType, Root: strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(info.Root), Flags: flags, Emulated: info.FsType == "fuse" && info.Source == "sysboxfs" && emulated, ReadonlyNetAlias: info.FsType == "fuse" && info.Source == "sysboxfs" && info.Root == path && domain.SysfsNetworkPath(decoded) && flags&unix.MS_RDONLY != 0})
++	}
++	return result
++}
+diff --git a/sysbox-fs/mount/service.go b/sysbox-fs/mount/service.go
+--- a/sysbox-fs/mount/service.go
++++ b/sysbox-fs/mount/service.go
+@@ -17,6 +17,8 @@
+ package mount
+ 
+ import (
++	"fmt"
++	"os"
+ 	"strings"
+ 
+ 	"github.com/nestybox/sysbox-fs/domain"
+@@ -129,3 +131,27 @@
+ func (mts *MountService) MountHelper() domain.MountHelperIface {
+ 	return mts.mh
+ }
++
++// CaptureSysfsPolicy runs at the pre-exec creation-time update, before container code
++// can change policy. It reads kernel metadata only: no FUSE lookup or nsenter
++// is allowed here, so first-ever network reads cannot recursively initialize.
++func (mts *MountService) CaptureSysfsPolicy(pid uint32) ([]domain.SysfsProtection, error) {
++	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/mountinfo", pid))
++	if err != nil {
++		return nil, err
++	}
++	parser, err := newMountInfoParser(nil, nil, false, true, false, mts)
++	if err != nil {
++		return nil, err
++	}
++	if err = parser.parseData(data); err != nil {
++		return nil, err
++	}
++	policy := parser.SysfsPolicy()
++	for _, entry := range policy {
++		if entry.Path == "/sys" {
++			return policy, nil
++		}
++	}
++	return nil, fmt.Errorf("registered pre-exec sysfs root missing")
++}
+diff --git a/sysbox-fs/seccomp/mount.go b/sysbox-fs/seccomp/mount.go
+--- a/sysbox-fs/seccomp/mount.go
++++ b/sysbox-fs/seccomp/mount.go
+@@ -345,6 +345,10 @@
+ 	payload := m.createSysPayload(mip)
+ 	if payload == nil {
+ 		return nil, fmt.Errorf("Could not construct sysfsMount payload")
++	}
++
++	if response, handled, err := m.processNestedSysMount(); handled {
++		return response, err
+ 	}
+ 
+ 	// Create nsenter-event envelope.
+diff --git a/sysbox-fs/seccomp/sysfs_transfer.go b/sysbox-fs/seccomp/sysfs_transfer.go
+new file mode 100644
+--- /dev/null
++++ b/sysbox-fs/seccomp/sysfs_transfer.go
+@@ -0,0 +1,58 @@
++// Copyright 2026 michibiki.io.
++// SPDX-License-Identifier: Apache-2.0
++
++package seccomp
++
++import (
++	"context"
++	"os"
++	"syscall"
++	"time"
++
++	"github.com/nestybox/sysbox-fs/sysfstransfer"
++	"github.com/sirupsen/logrus"
++)
++
++func (m *mountSyscallInfo) processNestedSysMount() (*sysResponse, bool, error) {
++	helper := os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER")
++	if helper == "" {
++		return nil, false, nil
++	}
++	reject := func(err error) (*sysResponse, bool, error) {
++		logrus.Warnf("sysfs-transfer tid=%d: %v", m.pid, err)
++		return m.tracer.createErrorResponse(m.reqId, sysfstransfer.Errno(err)), true, nil
++	}
++	outer, err := m.cntr.InitProc().UserNsInode()
++	if err != nil {
++		return reject(err)
++	}
++	user, err := m.processInfo.UserNsInode()
++	if err != nil {
++		return reject(err)
++	}
++	if outer == user {
++		return nil, false, nil
++	}
++	if err = sysfstransfer.Validate(m.Flags, m.Data); err != nil {
++		return reject(err)
++	}
++	if m.root != "/" || !m.processInfo.IsSysAdminCapabilitySet() || m.cntr.IsImmutableMountpoint(m.Target) || m.cntr.IsImmutableOverlapMountpoint(m.Target) {
++		return reject(syscall.EPERM)
++	}
++	r, err := sysfstransfer.Acquire(m.cntr, m.pid, m.uid, m.gid, m.Target, m.Flags, "", nil)
++	if err != nil {
++		return reject(err)
++	}
++	defer r.Close()
++	guard, ok := m.tracer.service.nss.(interface{ WithChildReaperGuard(func() error) error })
++	if !ok {
++		return reject(syscall.ENOTSUP)
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
++	defer cancel()
++	err = sysfstransfer.Run(ctx, helper, r, guard, func(run func() ([]byte, error)) ([]byte, error) { return runProcTransfer(m.notifyFd, m.reqId, run) })
++	if err != nil {
++		return reject(err)
++	}
++	return m.tracer.createSuccessResponse(m.reqId), true, nil
++}
+diff --git a/sysbox-fs/state/container.go b/sysbox-fs/state/container.go
+--- a/sysbox-fs/state/container.go
++++ b/sysbox-fs/state/container.go
+@@ -19,7 +19,9 @@
+ import (
+ 	"fmt"
+ 	"io"
++	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/nestybox/sysbox-fs/domain"
+@@ -31,18 +33,20 @@
+ // Container type to represent all the container-state relevant to sysbox-fs.
+ type container struct {
+ 	sync.RWMutex
+-	id              string                      // container-id value generated by runC
+-	initPid         uint32                      // initPid within container
+-	initPidFd       libpidfd.PidFd              //
+-	rootInode       uint64                      // initPid's root-path inode
+-	ctime           time.Time                   // container creation time
+-	uidFirst        uint32                      // first value of Uid range (host side)
+-	uidSize         uint32                      // Uid range size
+-	gidFirst        uint32                      // first value of Gid range (host side)
+-	gidSize         uint32                      // Gid range size
+-	regCompleted    bool                        // registration completion flag
+-	procRoPaths     []string                    // OCI spec read-only proc paths
+-	procMaskPaths   []string                    // OCI spec masked proc paths
++	id              string         // container-id value generated by runC
++	initPid         uint32         // initPid within container
++	initPidFd       libpidfd.PidFd //
++	rootInode       uint64         // initPid's root-path inode
++	ctime           time.Time      // container creation time
++	uidFirst        uint32         // first value of Uid range (host side)
++	uidSize         uint32         // Uid range size
++	gidFirst        uint32         // first value of Gid range (host side)
++	gidSize         uint32         // Gid range size
++	regCompleted    bool           // registration completion flag
++	procRoPaths     []string       // OCI spec read-only proc paths
++	procMaskPaths   []string       // OCI spec masked proc paths
++	sysfsPolicy     []domain.SysfsProtection
++	sysfsPolicyMeta atomic.Value
+ 	mountInfoParser domain.MountInfoParserIface // Per container mountinfo DB & parser
+ 	dataStore       map[string][]byte           // Per container data store for FUSE handlers (procfs, sysfs, etc); maps fuse path to data.
+ 	initProc        domain.ProcessIface         // container's init process
+@@ -487,3 +491,33 @@
+ 	defer c.intLock.Unlock()
+ 	c.regCompleted = true
+ }
++
++// SysfsPolicy returns the pre-exec registered-outer snapshot, independent of
++// upstream's lazy mount-hardening parser and first mount syscall.
++func (c *container) SysfsPolicy() []domain.SysfsProtection {
++	c.intLock.RLock()
++	defer c.intLock.RUnlock()
++	return append([]domain.SysfsProtection(nil), c.sysfsPolicy...)
++}
++
++type sysfsMetadataSnapshot struct {
++	policy   []domain.SysfsProtection
++	uid, gid uint32
++}
++
++// SysfsSourceAncestor uses an immutable, atomically published snapshot because
++// the upstream inode collector can call FUSE while holding intLock. It grants
++// only metadata traversal to registered source mount boundaries, never resource reads.
++func (c *container) SysfsSourceAncestor(path string) (ready, ancestor bool, uid, gid uint32) {
++	value := c.sysfsPolicyMeta.Load()
++	if value == nil {
++		return false, false, 0, 0
++	}
++	snapshot := value.(sysfsMetadataSnapshot)
++	for _, source := range snapshot.policy {
++		if source.Path == path || strings.HasPrefix(source.Path, path+"/") {
++			return true, true, snapshot.uid, snapshot.gid
++		}
++	}
++	return true, false, snapshot.uid, snapshot.gid
++}
+diff --git a/sysbox-fs/state/containerDB.go b/sysbox-fs/state/containerDB.go
+--- a/sysbox-fs/state/containerDB.go
++++ b/sysbox-fs/state/containerDB.go
+@@ -18,6 +18,7 @@
+ 
+ import (
+ 	"fmt"
++	"os"
+ 	"sync"
+ 	"time"
+ 
+@@ -278,6 +279,25 @@
+ 
+ 	// Update the existing container-state struct with the one being received.
+ 	// Only 'creation-time' attribute is supported for now.
++	if os.Getenv("SYSBOX_SYSFS_TRANSFER_HELPER") != "" {
++		capture, ok := css.mts.(interface {
++			CaptureSysfsPolicy(uint32) ([]domain.SysfsProtection, error)
++		})
++		if !ok {
++			css.Unlock()
++			return fmt.Errorf("sysfs policy capture unavailable")
++		}
++		policy, err := capture.CaptureSysfsPolicy(currCntr.InitPid())
++		if err != nil {
++			css.Unlock()
++			return fmt.Errorf("capture registered sysfs policy: %w", err)
++		}
++		currCntr.intLock.Lock()
++		currCntr.sysfsPolicy = policy
++		currCntr.sysfsPolicyMeta.Store(sysfsMetadataSnapshot{policy: append([]domain.SysfsProtection(nil), policy...), uid: currCntr.uidFirst, gid: currCntr.gidFirst})
++		currCntr.intLock.Unlock()
++	}
++
+ 	currCntr.SetCtime(cntr.ctime)
+ 	css.Unlock()
+ 
+diff --git a/sysbox-fs/sysfstransfer/transfer.go b/sysbox-fs/sysfstransfer/transfer.go
+new file mode 100644
+--- /dev/null
++++ b/sysbox-fs/sysfstransfer/transfer.go
+@@ -0,0 +1,477 @@
++// Copyright 2026 michibiki.io.
++// SPDX-License-Identifier: Apache-2.0
++
++// Package sysfstransfer acquires trusted descriptors for the separate sysfs
++// protocol. It never enters namespaces or changes mounts in the Go daemon.
++package sysfstransfer
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"sort"
++	"strconv"
++	"strings"
++	"syscall"
++	"time"
++
++	"github.com/nestybox/sysbox-fs/domain"
++	"golang.org/x/sys/unix"
++)
++
++const PIDFDThread = 0x80
++const allowed = unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC | unix.MS_RELATIME | unix.MS_STRICTATIME | unix.MS_SILENT | unix.MS_LAZYTIME
++
++func Validate(flags uint64, data string) error {
++	if data != "" || flags & ^uint64(allowed) != 0 || flags&unix.MS_RELATIME != 0 && flags&unix.MS_STRICTATIME != 0 {
++		return syscall.EINVAL
++	}
++	return nil
++}
++
++// Plan orders parents before children; recursive source clones also retain
++// submounts. Required metadata is never silently skipped on acquisition failure.
++func Plan(policy []domain.SysfsProtection, backing bool) ([]domain.SysfsProtection, uint64, error) {
++	var result []domain.SysfsProtection
++	var floor uint64
++	root := false
++	seen := map[string]bool{}
++	for _, p := range policy {
++		if filepath.Clean(p.Path) != p.Path || p.MountID <= 0 || seen[p.Path] {
++			return nil, 0, syscall.EINVAL
++		}
++		seen[p.Path] = true
++		if p.ReadonlyNetAlias && (!domain.SysfsNetworkPath(p.Path) || p.FsType != "fuse" || p.Flags&unix.MS_RDONLY == 0 || p.Emulated) {
++			return nil, 0, syscall.EINVAL
++		}
++		if p.Path == "/sys" {
++			// Fresh sysfs cannot reconstruct a whole-root mask or restricted bind.
++			if p.FsType != "sysfs" || p.Root != "/" {
++				return nil, 0, syscall.ENOTSUP
++			}
++			root = true
++			floor = p.Flags & uint64(unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC)
++			continue
++		}
++		if !strings.HasPrefix(p.Path, "/sys/") {
++			return nil, 0, syscall.EINVAL
++		}
++		// The FUSE net handler replaces only its own emulation ancestor. All OCI
++		// masks/RO mounts, including descendants inside that ancestor, remain.
++		if backing && p.Path == "/sys/devices/virtual" && p.Emulated {
++			continue
++		}
++		if backing && domain.SysfsNetworkPath(p.Path) && (p.Emulated || p.FsType == "fuse" && !p.ReadonlyNetAlias) {
++			return nil, 0, syscall.ENOTSUP
++		}
++		result = append(result, p)
++	}
++	if !root || len(result) > 128 {
++		return nil, 0, syscall.EPERM
++	}
++	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
++	return result, floor, nil
++}
++
++type Request struct {
++	Files []*os.File
++	Args  []string
++}
++
++func (r *Request) Close() {
++	for _, f := range r.Files {
++		f.Close()
++	}
++}
++
++// pinTask anchors proc lookups before opening PIDFD_THREAD. Even if the task
++// exits between these steps, namespace reads through the anchor fail rather
++// than switching to a replacement task. Polling is an early exit check only;
++// concurrent exec/setns and the final check-to-use window remain non-atomic.
++func pinTask(tid uint32) (dir, thread int, err error) {
++	dir, err = unix.Open(fmt.Sprintf("/proc/%d", tid), unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return -1, -1, fmt.Errorf("pin task tid=%d: %w", tid, err)
++	}
++	thread, err = unix.PidfdOpen(int(tid), PIDFDThread)
++	if err == nil {
++		err = taskAlive(thread)
++	}
++	if err != nil {
++		unix.Close(dir)
++		if thread >= 0 {
++			unix.Close(thread)
++		}
++		return -1, -1, fmt.Errorf("PIDFD_THREAD tid=%d: %w", tid, err)
++	}
++	return dir, thread, nil
++}
++
++func taskAlive(thread int) error {
++	fds := []unix.PollFd{{Fd: int32(thread), Events: unix.POLLIN}}
++	for {
++		n, err := unix.Poll(fds, 0)
++		if err == unix.EINTR {
++			continue
++		}
++		if err != nil {
++			return err
++		}
++		if n != 0 {
++			if fds[0].Revents&unix.POLLNVAL != 0 {
++				return syscall.EBADF
++			}
++			return syscall.ESRCH
++		}
++		return nil
++	}
++}
++
++func Acquire(c domain.ContainerIface, tid, uid, gid uint32, target string, flags uint64, operation string, channel *os.File) (_ *Request, err error) {
++	if c == nil || !c.IsRegistrationCompleted() || uid < c.UID() || uid-c.UID() >= c.UidSize() || gid < c.GID() || gid-c.GID() >= c.GidSize() {
++		return nil, syscall.EPERM
++	}
++	if err = Validate(flags, ""); err != nil {
++		return nil, err
++	}
++	snapshot, ok := c.(interface {
++		SysfsPolicy() []domain.SysfsProtection
++	})
++	if !ok {
++		return nil, syscall.ENOTSUP
++	}
++	policy, floor, err := Plan(snapshot.SysfsPolicy(), channel != nil)
++	if err != nil {
++		return nil, err
++	}
++	r := &Request{Args: []string{strconv.FormatUint(uint64(uid-c.UID()), 10), strconv.FormatUint(uint64(gid-c.GID()), 10), strconv.FormatUint(flags|floor, 10)}}
++	defer func() {
++		if err != nil {
++			r.Close()
++		}
++	}()
++	// A proc task directory pins the kernel task identity, so subsequent openat
++	// calls cannot silently resolve a recycled numeric TID. Acquire the thread
++	// pidfd before reading namespaces/root and retain it through helper launch.
++	requester, thread, err := pinTask(tid)
++	if err != nil {
++		return nil, err
++	}
++	defer unix.Close(requester)
++	defer func() {
++		if thread >= 0 {
++			unix.Close(thread)
++		}
++	}()
++	outer, e := unix.Open(fmt.Sprintf("/proc/%d", c.InitPid()), unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if e != nil {
++		return nil, e
++	}
++	defer unix.Close(outer)
++	add := func(root int, path string, flags int) error {
++		fd, e := unix.Openat(root, path, flags|unix.O_CLOEXEC, 0)
++		if e != nil {
++			return fmt.Errorf("pin task %s: %w", path, e)
++		}
++		r.Files = append(r.Files, os.NewFile(uintptr(fd), path))
++		return nil
++	}
++	// The original notification/FUSE TID is used everywhere, never TGID.
++	for _, p := range []struct {
++		root int
++		path string
++	}{{outer, "ns/user"}, {outer, "ns/mnt"}, {requester, "ns/user"}, {requester, "ns/mnt"}, {requester, "ns/net"}} {
++		if err = add(p.root, p.path, unix.O_RDONLY); err != nil {
++			return nil, err
++		}
++	}
++	outerRoot, e := unix.Openat(outer, "root", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++	if e != nil {
++		return nil, e
++	}
++	defer unix.Close(outerRoot)
++	rooted := func(root int, path string, flags int) error {
++		fd, e := unix.Openat2(root, path, &unix.OpenHow{Flags: uint64(flags | unix.O_CLOEXEC), Resolve: unix.RESOLVE_IN_ROOT | unix.RESOLVE_NO_MAGICLINKS})
++		if e != nil {
++			return fmt.Errorf("pin rooted %s: %w", path, e)
++		}
++		r.Files = append(r.Files, os.NewFile(uintptr(fd), path))
++		return nil
++	}
++	if channel != nil {
++		fd, e := unix.Dup(int(channel.Fd()))
++		if e != nil {
++			return nil, e
++		}
++		unix.CloseOnExec(fd)
++		r.Files = append(r.Files, os.NewFile(uintptr(fd), "backing channel"))
++		if filepath.Clean(target) != target || !domain.SysfsNetworkPath(target) || (operation != "lookup" && operation != "open") {
++			return nil, syscall.EINVAL
++		}
++		r.Args = append(r.Args, "--"+operation+"="+strings.TrimPrefix(target, "/sys/"))
++	} else {
++		root, e := unix.Openat(requester, "root", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
++		if e != nil {
++			return nil, e
++		}
++		defer unix.Close(root)
++		if !filepath.IsAbs(target) || filepath.Clean(target) != target {
++			return nil, syscall.EINVAL
++		}
++		if err = rooted(root, target, unix.O_PATH|unix.O_DIRECTORY); err != nil {
++			return nil, err
++		}
++	}
++	if err = rooted(outerRoot, "/", unix.O_PATH|unix.O_DIRECTORY); err != nil {
++		return nil, err
++	}
++	r.Files = append(r.Files, os.NewFile(uintptr(thread), "requester thread"))
++	thread = -1 // ownership transferred to Request, preserving protocol FD10
++	// Verify the root floor source too. Mount IDs prevent replacement by another
++	// mount with a coincidentally identical inode. FUSE inode 0 is intentionally
++	// not recorded by upstream; its registered mount ID remains mandatory.
++	verify := func(p domain.SysfsProtection) error {
++		f := r.Files[len(r.Files)-1]
++		var fs unix.Statfs_t
++		if e := unix.Fstatfs(int(f.Fd()), &fs); e != nil {
++			return e
++		}
++		floor := p.Flags & uint64(unix.MS_RDONLY|unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC)
++		if uint64(fs.Flags)&floor != floor {
++			return syscall.ESTALE
++		}
++		var st unix.Stat_t
++		if e := unix.Fstat(int(f.Fd()), &st); e != nil {
++			return e
++		}
++		if p.Inode != 0 && uint64(st.Ino) != uint64(p.Inode) {
++			return syscall.ESTALE
++		}
++		info, e := os.ReadFile(fmt.Sprintf("/proc/self/fdinfo/%d", f.Fd()))
++		if e != nil {
++			return e
++		}
++		var id int
++		for _, line := range strings.Split(string(info), "\n") {
++			if strings.HasPrefix(line, "mnt_id:") {
++				_, e = fmt.Sscanf(line, "mnt_id: %d", &id)
++				if e != nil {
++					return e
++				}
++			}
++		}
++		if id != p.MountID {
++			return syscall.ESTALE
++		}
++		return nil
++	}
++	for _, p := range snapshot.SysfsPolicy() {
++		if p.Path == "/sys" {
++			if err = rooted(outerRoot, p.Path, unix.O_PATH); err != nil {
++				return nil, err
++			}
++			if err = verify(p); err != nil {
++				return nil, err
++			}
++			r.Files[len(r.Files)-1].Close()
++			r.Files = r.Files[:len(r.Files)-1]
++		}
++	}
++	for _, p := range policy {
++		if err = rooted(outerRoot, p.Path, unix.O_PATH); err != nil {
++			return nil, err
++		}
++		if err = verify(p); err != nil {
++			return nil, fmt.Errorf("registered sysfs source %s: %w", p.Path, err)
++		}
++		name := strings.TrimPrefix(p.Path, "/sys/")
++		if channel != nil && p.ReadonlyNetAlias {
++			name = "@ro:" + name
++		}
++		r.Args = append(r.Args, name)
++	}
++	if err = taskAlive(int(r.Files[7].Fd())); err != nil {
++		return nil, err
++	}
++	return r, nil
++}
++
++func Errno(err error) syscall.Errno {
++	var e syscall.Errno
++	if errors.As(err, &e) {
++		return e
++	}
++	var exit *exec.ExitError
++	if errors.As(err, &exit) && exit.ExitCode() > 0 && exit.ExitCode() < 256 {
++		return syscall.Errno(exit.ExitCode())
++	}
++	return syscall.EIO
++}
++
++func Run(ctx context.Context, helper string, r *Request, guard interface{ WithChildReaperGuard(func() error) error }, launch func(func() ([]byte, error)) ([]byte, error)) error {
++	if !filepath.IsAbs(helper) {
++		return syscall.EINVAL
++	}
++	cmd := exec.CommandContext(ctx, helper, r.Args...)
++	cmd.ExtraFiles = r.Files
++	cmd.Env = []string{}
++	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
++	return guard.WithChildReaperGuard(func() error {
++		out, err := launch(cmd.CombinedOutput)
++		if err != nil {
++			return fmt.Errorf("sysfs helper: %s: %w", out, err)
++		}
++		return nil
++	})
++}
++
++// Setup failures must not look like missing resources: libc treats ENOENT from
++// readdir as EOF. Preserve the original diagnostic while reporting EIO.
++func backingSetupError(err error) error {
++	if e := Errno(err); e == syscall.ENOENT || e == syscall.ENOTDIR {
++		return fmt.Errorf("backing setup: %v: %w", err, syscall.EIO)
++	}
++	return err
++}
++
++func backingHelperError(err error) error {
++	var exit *exec.ExitError
++	if errors.As(err, &exit) {
++		// Only the helper's final resource open may emit these reserved statuses.
++		switch exit.ExitCode() {
++		case 200:
++			return fmt.Errorf("%v: %w", err, syscall.ENOENT)
++		case 201:
++			return fmt.Errorf("%v: %w", err, syscall.ENOTDIR)
++		}
++	}
++	return backingSetupError(err)
++}
++
++// OpenBacking returns a single resource, opened under the caller's mapped
++// credentials. No userspace cache; pins and private view expire per operation.
++func OpenBacking(c domain.ContainerIface, tid, uid, gid uint32, path, operation, helper string, nss interface{}) (*os.File, error) {
++	guard, ok := nss.(interface{ WithChildReaperGuard(func() error) error })
++	if !ok {
++		return nil, syscall.ENOTSUP
++	}
++	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
++	if err != nil {
++		return nil, err
++	}
++	parent := os.NewFile(uintptr(pair[0]), "backing receive")
++	child := os.NewFile(uintptr(pair[1]), "backing send")
++	defer parent.Close()
++	defer child.Close()
++	r, err := Acquire(c, tid, uid, gid, path, unix.MS_RDONLY, operation, child)
++	if err != nil {
++		return nil, backingSetupError(err)
++	}
++	defer r.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
++	defer cancel()
++	err = Run(ctx, helper, r, guard, func(run func() ([]byte, error)) ([]byte, error) { return run() })
++	if err != nil {
++		return nil, backingHelperError(err)
++	}
++	// Read after successful wait: one small SCM_RIGHTS packet cannot fill socket.
++	// Nonblocking receive prevents a misconfigured helper that exits without send
++	// from hanging on our own still-open child descriptor.
++	b := make([]byte, 1)
++	oob := make([]byte, unix.CmsgSpace(4))
++	n, on, flags, _, err := unix.Recvmsg(pair[0], b, oob, unix.MSG_CMSG_CLOEXEC|unix.MSG_DONTWAIT)
++	if err != nil {
++		return nil, syscall.EIO
++	}
++	msgs, err := unix.ParseSocketControlMessage(oob[:on])
++	if err != nil {
++		return nil, syscall.EIO
++	}
++	var fds []int
++	for _, m := range msgs {
++		rights, e := unix.ParseUnixRights(&m)
++		if e != nil {
++			err = e
++		} else {
++			fds = append(fds, rights...)
++		}
++	}
++	if err != nil || n != 1 || b[0] != 'F' || flags&unix.MSG_CTRUNC != 0 || len(fds) != 1 {
++		for _, fd := range fds {
++			unix.Close(fd)
++		}
++		return nil, syscall.EIO
++	}
++	return os.NewFile(uintptr(fds[0]), filepath.Base(path)), nil
++}
++
++// OwnMetadataTask recognizes only this daemon's actual thread or its direct
++// child inode worker. The host-root FUSE header is checked by the handler. A
++// pinned task directory and early thread pidfd prevent numeric PID reuse from
++// redirecting the status read. Tgid is compared for ownership, never substituted.
++func OwnMetadataTask(tid uint32) bool { return ownMetadataTask(tid, false) }
++
++// Construction metadata is permitted only before the helper clears capabilities.
++func OwnMetadataConstructor(tid uint32) bool { return ownMetadataTask(tid, true) }
++
++func ownMetadataTask(tid uint32, requireAdmin bool) bool {
++	dir, thread, err := pinTask(tid)
++	if err != nil {
++		return false
++	}
++	defer unix.Close(dir)
++	defer unix.Close(thread)
++	fd, err := unix.Openat(dir, "status", unix.O_RDONLY|unix.O_CLOEXEC, 0)
++	if err != nil {
++		return false
++	}
++	f := os.NewFile(uintptr(fd), "metadata task status")
++	defer f.Close()
++	data, err := io.ReadAll(io.LimitReader(f, 16384))
++	if err != nil {
++		return false
++	}
++	own, admin := metadataIdentity(data, requireAdmin)
++	if !own || (requireAdmin && !admin) {
++		return false
++	}
++	if requireAdmin {
++		// Only a direct child helper of this daemon may construct metadata,
++		// with capabilities still present and a real pidfd in FD10.
++		fd, e := unix.Openat(dir, "fdinfo/10", unix.O_RDONLY|unix.O_CLOEXEC, 0)
++		if e != nil {
++			return false
++		}
++		pf := os.NewFile(uintptr(fd), "constructor pidfd metadata")
++		info, e := io.ReadAll(io.LimitReader(pf, 4096))
++		pf.Close()
++		if e != nil || !strings.Contains(string(info), "\nPid:") {
++			return false
++		}
++	}
++	return own && (!requireAdmin || admin) && taskAlive(thread) == nil
++}
++
++// Constructor metadata is limited to the direct helper, not its locker child.
++// Host metadata also permits this daemon's own threads.
++func metadataIdentity(data []byte, requireAdmin bool) (bool, bool) {
++	own, admin := false, false
++	for _, line := range strings.Split(string(data), "\n") {
++		fields := strings.Fields(line)
++		if len(fields) == 2 && fields[0] == "CapEff:" {
++			bits, e := strconv.ParseUint(fields[1], 16, 64)
++			admin = e == nil && bits&(1<<21) != 0
++		}
++		if len(fields) == 2 && (fields[0] == "Tgid:" || fields[0] == "PPid:") {
++			id, err := strconv.Atoi(fields[1])
++			if err == nil && id == os.Getpid() && (!requireAdmin || fields[0] == "PPid:") {
++				own = true
++			}
++		}
++	}
++	return own, admin
++}
