@@ -27,7 +27,7 @@ bwrap --die-with-parent --unshare-all --share-net \
   --ro-bind / / --dev-bind /dev /dev --tmpfs /tmp \
   --ro-bind "$work" "$work" \
   --dir /tmp/proc --proc /proc --cap-add CAP_SYS_ADMIN -- \
-  "$work/verify" readonly /tmp/proc
+  "$work/verify" readonly /tmp/proc "$work/proc-manifest"
 
 # Actual nonleader notification/helper path, with a separate observer in the
 # requester's Mount namespace and an unchanged leader Mount namespace.

@@ -2,8 +2,8 @@
 
 ## Contents / 目次
 
-- [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries)
-- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲)
+- [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries), [Proc verifier correction](#proc-verifier-correction)
+- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲), [proc 検査の修正](#proc-検査の修正)
 
 - [Sysfs consumer gate](#sysfs-consumer-gate) / [sysfs の consumer gate](#sysfs-の-consumer-gate)
 
@@ -31,6 +31,12 @@ The final patch moves nested dispatch after the existing `createProcPayload` rea
 Issue #3 was verified on arm64, Linux 7.1.0, Sysbox 0.7.1 and bubblewrap 0.9.0 using a temporary isolated daemon and a dedicated disposable container. The native BuildKit build used the pinned public Dockerfile inputs and passed all four focused upstream Go tests. The paired artifact SHA-256 values were `sysbox-fs` = `79b3edfdb69c1c36b9fb37f7a8ca7c2608fb52acccc824365abfc5bf83dcff37` and `proc-mount-helper` = `9125ecc309246e2bbdd1c83971a0737f0f7acc122d158eb5f5271a655b88c0fd`.
 
 Passed: the unchanged non-root bwrap command; PID/User namespace separation and seccomp; registered protection identities, masks, read-only policy and detach locks; recursive read-only procfs; preserved `/sys` binds; actual nonleader read-write/read-only mounts in distinct Mount namespaces; all 32 direct-helper checkpoint cases with independent surviving observers; all four historical helper rejection modes; and 500 unchanged mounts with eight workers and concurrent nsenter/FUSE reaping. The checkpoint fixture creates its own notification listener from a trusted namespace-entry launcher, while the actual-path probe retains Sysbox's production seccomp filter. No running host daemon was replaced and no installation/configuration support is claimed. [Runtime instructions](../tests/runtime/README.md) specify reproduction and the distinction between these test paths.
+
+### Proc verifier correction
+
+Issue #7 corrects the recursive readonly test's kernel-dependent entry assumption without changing production helpers or patches. Only `/proc/asound` may be absent; all ten other catalog entries, including the three existing masks, remain required. Both consumers validate a complete, bounded present/absent baseline before mount operations. Each observes expected absence as ENOENT and rejects other inspection errors or loss of previously present entries. Root and applicable subentry readonly checks, sandbox identity/masks/detach/remount checks, namespace/seccomp checks and caller privileges remain unchanged. ALSA installation, module loading and host reconfiguration are not prerequisites.
+
+The [runtime instructions](../tests/runtime/README.md#proc-protection-baseline) specify the new manifest/readonly argument contract and independently checksum-consumable tests. Focused regression tests compile actual verifier code with syscall stubs; they are distinct from real runtime validation. On 2026-10-16 the corrected runner passed in a disposable arm64/Linux 7.1.0/Sysbox 0.7.1/bubblewrap 0.9.0 environment with a UID/GID 1001 caller, CapEff 0, NoNewPrivs 1 and seccomp mode 2/filter count 1. Original bwrap, sandbox protections, existing sys binds, recursive readonly and nonleader RW/RO checks passed. This kernel has asound; absence is covered by syscall simulation, not a real absent-entry kernel. Exact-head CI is reported on the PR; historical runtime results remain separate evidence. Actual Talos downstream revalidation is separately tracked by [installer issue #7](https://github.com/michibiki-io/talos-sysbox-installer/issues/7). New sysfs/FUSE acceptance remains independent.
 
 ### Verification boundaries
 
@@ -117,6 +123,24 @@ Issue #3 は arm64、Linux 7.1.0、Sysbox 0.7.1、bubblewrap 0.9.0 で、一時�
 実経路の検査は Sysbox の production seccomp filter を保持します。
 稼働中ホストの daemon は置き換えておらず、導入や設定の対応を主張する結果ではありません。
 再現手順と二つの検査経路の違いは [実行手順](../tests/runtime/README.md) に記載します。
+
+### proc 検査の修正
+
+Issue #7 は再帰的 readonly 検査の kernel 依存項目に関する前提を修正し、production helper と patch は変更しません。
+不在を許容するのは `/proc/asound` だけで、既存の3 mask を含む他の10候補は必須です。
+両 consumer は mount 操作の前に、存在と不在を網羅する有限の事前記録を検証します。
+期待する不在は各 consumer でも ENOENT と一致する必要があり、その他の観測エラーや存在した項目の消失は失敗とします。
+root と適用対象の readonly、sandbox の identity、mask、detach/remount 拒否、namespace/seccomp 検査、caller 権限は維持します。
+ALSA の導入、module の読み込み、ホスト設定変更は前提にしません。
+
+[実行手順](../tests/runtime/README.md#proc-保護の事前記録)に、新しい記録形式、readonly の引数、checksum 固定で単独取得できる検査を記載します。
+対象を絞った回帰検査は実際の verifier を syscall stub とコンパイルするもので、実環境の検証とは区別します。
+2026-10-16 に使い捨ての arm64／Linux 7.1.0／Sysbox 0.7.1／bubblewrap 0.9.0 環境で、UID/GID 1001、CapEff 0、NoNewPrivs 1、seccomp mode 2・filter 1 の caller から修正版 runner を検証しました。
+元の bwrap、sandbox 保護、既存 sys bind、再帰的 readonly、非 leader の RW/RO は成功しました。
+この kernel には asound が存在し、不在の正常系は syscall 模擬検査で確認しています。実際に不在の kernel での成功を示すものではありません。
+確定 head の CI は PR に記録し、過去の runtime 結果とは区別します。
+実 Talos の下流再検証は [installer issue #7](https://github.com/michibiki-io/talos-sysbox-installer/issues/7) で別途追跡します。
+新規 sysfs/FUSE の受け入れ条件は独立して維持します。
 
 ### 検証範囲
 
