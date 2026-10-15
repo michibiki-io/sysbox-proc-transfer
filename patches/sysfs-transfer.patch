@@ -1135,7 +1135,7 @@ diff --git a/sysbox-fs/sysfstransfer/transfer.go b/sysbox-fs/sysfstransfer/trans
 new file mode 100644
 --- /dev/null
 +++ b/sysbox-fs/sysfstransfer/transfer.go
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,475 @@
 +// Copyright 2026 michibiki.io.
 +// SPDX-License-Identifier: Apache-2.0
 +
@@ -1467,6 +1467,29 @@ new file mode 100644
 +	})
 +}
 +
++// Setup failures must not look like missing resources: libc treats ENOENT from
++// readdir as EOF. Preserve the original diagnostic while reporting EIO.
++func backingSetupError(err error) error {
++	if e := Errno(err); e == syscall.ENOENT || e == syscall.ENOTDIR {
++		return fmt.Errorf("backing setup: %v: %w", err, syscall.EIO)
++	}
++	return err
++}
++
++func backingHelperError(err error) error {
++	var exit *exec.ExitError
++	if errors.As(err, &exit) {
++		// Only the helper's final resource open may emit these reserved statuses.
++		switch exit.ExitCode() {
++		case 200:
++			return fmt.Errorf("%v: %w", err, syscall.ENOENT)
++		case 201:
++			return fmt.Errorf("%v: %w", err, syscall.ENOTDIR)
++		}
++	}
++	return backingSetupError(err)
++}
++
 +// OpenBacking returns a single resource, opened under the caller's mapped
 +// credentials. No userspace cache; pins and private view expire per operation.
 +func OpenBacking(c domain.ContainerIface, tid, uid, gid uint32, path, operation, helper string, nss interface{}) (*os.File, error) {
@@ -1484,14 +1507,14 @@ new file mode 100644
 +	defer child.Close()
 +	r, err := Acquire(c, tid, uid, gid, path, unix.MS_RDONLY, operation, child)
 +	if err != nil {
-+		return nil, err
++		return nil, backingSetupError(err)
 +	}
 +	defer r.Close()
 +	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 +	defer cancel()
 +	err = Run(ctx, helper, r, guard, func(run func() ([]byte, error)) ([]byte, error) { return run() })
 +	if err != nil {
-+		return nil, err
++		return nil, backingHelperError(err)
 +	}
 +	// Read after successful wait: one small SCM_RIGHTS packet cannot fill socket.
 +	// Nonblocking receive prevents a misconfigured helper that exits without send

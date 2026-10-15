@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inside a disposable registered outer container using a failing test helper.
 A task-owned switch file permits a good open followed by a failed backing read.
+An optional numeric argument injects setup ENOENT/ENOTDIR instead of EIO.
 """
 import ctypes
 import errno
@@ -22,7 +23,7 @@ except FileNotFoundError:
 else:
     raise AssertionError('missing entry visible')
 fd = os.open(path,os.O_RDONLY|os.O_DIRECTORY)
-switch.touch()
+switch.write_text(sys.argv[2] if len(sys.argv)>2 else str(errno.EIO))
 try:
     buffer = ctypes.create_string_buffer(8192)
     r = libc.syscall({'x86_64':217,'aarch64':61}[os.uname().machine],fd,buffer,len(buffer))

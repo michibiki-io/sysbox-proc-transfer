@@ -1,5 +1,5 @@
 /* Synthetic notification requester for the trusted direct-helper regression.
- * Its getpid listener is real; actual Sysbox mount coverage is thread-proc.c. */
+ * Its getpid listener is real; actual Sysbox mount coverage is thread-sysfs.c. */
 #define main thread_proc_main
 #include "thread-sysfs.c"
 #undef main
@@ -11,6 +11,13 @@
 #include <sys/prctl.h>
 static const char *control;
 static int leader;
+static void verify_unchanged(void) {
+    char p[2048];
+    snprintf(p, sizeof(p), "%s/class", target);
+    struct stat s;
+    need(stat(p, &s) < 0 && errno == ENOENT, "detected failure leaves target unchanged");
+    puts("PASS observer target unchanged");
+}
 static void interrupt_handler(int s) { (void)s; }
 static void exec_survivor(void) {
     execl("/bin/sleep", "sleep", "30", NULL);
@@ -53,10 +60,7 @@ static void *notifier(void *u) {
             verify();
         else {
             need(c == 'U', "unchanged command");
-            snprintf(p, sizeof(p), "%s/1", target);
-            struct stat s;
-            need(stat(p, &s) < 0 && errno == ENOENT, "detected failure leaves target unchanged");
-            puts("PASS observer target unchanged");
+            verify_unchanged();
         }
         fflush(stdout);
         _exit(0);
@@ -94,7 +98,10 @@ static void *notifier(void *u) {
     }
     return NULL;
 }
-int main(int argc, char **argv) {
+#ifndef CHECKPOINT_SYSFS_MAIN
+#define CHECKPOINT_SYSFS_MAIN main
+#endif
+int CHECKPOINT_SYSFS_MAIN(int argc, char **argv) {
     need(argc == 5, "target control leader/nonleader token");
     alarm(45);
     target = argv[1];

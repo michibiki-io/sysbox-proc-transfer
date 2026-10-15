@@ -1,4 +1,4 @@
-/* TEST ONLY: operator-supplied paths. Fail with EIO after the task-owned switch
+/* TEST ONLY: operator-supplied paths. Fail with EIO (or a switch-selected ENOENT/ENOTDIR) after the task-owned switch
  * appears, otherwise exec the production helper retaining the exact FDs. */
 #ifndef TEST_HELPER
 #define TEST_HELPER "/invalid/test-helper"
@@ -19,7 +19,11 @@ int main(int argc, char **argv) {
         helper=TEST_HELPER;
         trigger=TEST_TRIGGER;
     }
-    if (!access(trigger,F_OK)) return EIO;
+    if (!access(trigger,F_OK)) {
+        FILE *f=fopen(trigger,"r");int code=EIO;
+        if (f) { int requested; if (fscanf(f,"%d",&requested)==1 && (requested==ENOENT || requested==ENOTDIR)) code=requested; fclose(f); }
+        return code;
+    }
     argv[0]=(char *)helper;
     execv(helper,argv);
     perror("exec production sysfs helper");return EIO;

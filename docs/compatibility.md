@@ -60,6 +60,8 @@ The dentry-fix pair at head `56a5562` (amd64 daemon `95f7fc2d…`, arm64 daemon 
 
 For the latest GETATTR/owning-container correction, the generated `manifest.json` is authoritative for complete artifact SHA-256 values and exact build input hashes. Output hashes are intentionally not build inputs. Both architecture builds passed the focused dispatch, owning-container and existing regression gates. Supplemental arm64 runtime passed two containers sharing Network/User and emulation state with distinct roots/Mount namespaces: the second retained its virtual-net view after the first exited. This is an OCI smoke, not a Kubernetes Pod test. Helper-unset outer FUSE, upstream nested denial and repeated real FUSE GETATTR via statx FORCE_SYNC also passed, retaining nonzero stable distinct emulated inodes. Four actual nonleader shared/new-Net RW/RO cases plus proc/sys-bind regressions also passed; the completion report records the exact outcomes separately. Do not apply the historical broad pass list to this latest pair. AC7 remains deferred/unrun.
 
+Enabled sysfs transfer/backing also requires a real `/tmp` directory in the registered outer rootfs (a symlink is insufficient). Private staging is attached only in the helper's private Mount namespace. Backing reports acquisition/construction ENOENT/ENOTDIR as EIO with the original diagnostic; only final network-resource resolution preserves genuine ENOENT/ENOTDIR. Transfer retains its original errno.
+
 ## 日本語
 
 ### 検証済みの基準
@@ -194,3 +196,5 @@ helper 未設定時の外側 FUSE、従来の nested 拒否、statx FORCE_SYNC �
 非 leader の共有／新設 Network と RW／RO の4条件、proc／sys bind 回帰も成功し、正確な結果は完了報告で区別します。
 過去の広い成功一覧を最新 pair の再検証結果として扱いません。
 AC7 は deferred/unrun のままです。
+
+有効化した sysfs transfer/backing は、登録済み外側 rootfs の `/tmp` に実ディレクトリが必要です。symlink は使えません。staging は helper の private Mount namespace 内にだけ取り付けます。staging・task metadata・登録 source の取得や構築で ENOENT／ENOTDIR が発生した場合、backing は運用上の失敗として EIO を返します。最終 network resource 解決の真の不在だけ ENOENT／ENOTDIR を維持し、transfer の元 errno は保持します。

@@ -2,6 +2,7 @@ package sysfstransfer
 
 import (
 	"errors"
+	"fmt"
 	"github.com/nestybox/sysbox-fs/domain"
 	"golang.org/x/sys/unix"
 	"os"
@@ -234,5 +235,40 @@ func TestRootMountIDMismatch(t *testing.T) {
 	entries, err := os.ReadDir(target)
 	if err != nil || len(entries) != 0 {
 		t.Fatal("target changed", err)
+	}
+}
+
+// Exercise real child exit statuses across the C/Go protocol boundary. A plain
+// helper setup ENOENT must not turn readdir into successful EOF.
+func TestBackingFailureOrigin(t *testing.T) {
+	for _, fixture := range []struct {
+		status int
+		want   syscall.Errno
+	}{
+		{2, syscall.EIO}, {20, syscall.EIO}, {200, syscall.ENOENT},
+		{201, syscall.ENOTDIR}, {13, syscall.EACCES}, {5, syscall.EIO},
+	} {
+		err := exec.Command("/bin/sh", "-c", "exit "+strconv.Itoa(fixture.status)).Run()
+		if err == nil {
+			t.Fatal("expected child failure")
+		}
+		wrapped := fmt.Errorf("helper diagnostic: %w", err)
+		mapped := backingHelperError(wrapped)
+		if got := Errno(mapped); got != fixture.want {
+			t.Fatalf("status %d: %v want %v", fixture.status, got, fixture.want)
+		}
+		if !strings.Contains(mapped.Error(), "helper diagnostic") {
+			t.Fatal("lost diagnostic", mapped)
+		}
+		// Transfer keeps its original errno; reserved resource statuses are backing-only.
+		if fixture.status < 200 && Errno(wrapped) != syscall.Errno(fixture.status) {
+			t.Fatal("transfer errno changed")
+		}
+	}
+	for _, cause := range []syscall.Errno{syscall.ENOENT, syscall.ENOTDIR} {
+		err := backingSetupError(fmt.Errorf("pin registered source: %w", cause))
+		if Errno(err) != syscall.EIO || !strings.Contains(err.Error(), "pin registered source") {
+			t.Fatal(err)
+		}
 	}
 }

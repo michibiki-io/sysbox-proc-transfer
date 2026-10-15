@@ -31,6 +31,12 @@
  * 11+ protected sources. Only trusted host proc metadata is opened before mapped-user entry;
  * every mount operation runs in the registered mapped user namespace. */
 static void die(const char *s) { int e=errno?errno:EIO;fprintf(stderr,"sysfs-transfer: %s: %s\n",s,strerror(e));_exit(e<256?e:EIO); }
+/* Backing-only protocol: 200/201 identify a genuinely missing resource.
+ * Ordinary ENOENT/ENOTDIR from setup remain distinguishable by the daemon. */
+static void resource_error(void) {
+ int e=errno;fprintf(stderr,"sysfs-transfer: open network backing resource: %s\n",strerror(e));
+ _exit(e==ENOENT?200:e==ENOTDIR?201:(e>0&&e<200?e:EIO));
+}
 static void ck(int r,const char*s){if(r<0)die(s);}
 static void need(int yes,const char*s){if(!yes){errno=EPERM;die(s);}}
 static int same(int a,int b){struct stat x,y;ck(fstat(a,&x),"stat fd");ck(fstat(b,&y),"stat fd");return x.st_dev==y.st_dev&&x.st_ino==y.st_ino;}
@@ -160,7 +166,7 @@ int main(int argc,char**argv){
   struct __user_cap_header_struct h={.version=_LINUX_CAPABILITY_VERSION_3};struct __user_cap_data_struct d[2]={{0},{0}};
   ck(syscall(SYS_capset,&h,d),"clear backing capabilities");ck(prctl(PR_SET_DUMPABLE,0),"backing nondumpable");
   struct open_how how={.flags=(lookup?O_PATH|O_NOFOLLOW:O_RDONLY)|O_CLOEXEC,.resolve=RESOLVE_BENEATH|RESOLVE_NO_MAGICLINKS|RESOLVE_NO_SYMLINKS};
-  int f=syscall(SYS_openat2,root,resource,&how,sizeof(how));ck(f,"open network backing resource");close(root);alive();sendfd(8,f);close(f);return 0;
+  int f=syscall(SYS_openat2,root,resource,&how,sizeof(how));if(f<0)resource_error();close(root);alive();sendfd(8,f);close(f);return 0;
  }
  /* A sacrificial child user namespace locks every protected submount. Its
   * detached tree is passed back to the mapped outer worker, never the sandbox. */

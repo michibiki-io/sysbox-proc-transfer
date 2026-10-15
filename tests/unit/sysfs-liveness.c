@@ -39,7 +39,24 @@ static int probe(int fd) {
     assert_ok(WIFEXITED(s), "probe exit");
     return WEXITSTATUS(s);
 }
+static void failure_origin(int resource, int error, int expected) {
+    pid_t p = fork();
+    assert_ok(p >= 0, "failure fork");
+    if (!p) {
+        errno = error;
+        if (resource) resource_error();
+        die("setup diagnostic");
+    }
+    int s;
+    assert_ok(waitpid(p, &s, 0) == p && WIFEXITED(s) && WEXITSTATUS(s) == expected,
+              "setup/resource failure status");
+}
 int main(void) {
+    failure_origin(0, ENOENT, ENOENT);
+    failure_origin(0, ENOTDIR, ENOTDIR);
+    failure_origin(1, ENOENT, 200);
+    failure_origin(1, ENOTDIR, 201);
+    failure_origin(1, EACCES, EACCES);
     alarm(30);
     pid_t p = fork();
     assert_ok(p >= 0, "requester fork");
