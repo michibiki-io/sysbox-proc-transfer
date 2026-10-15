@@ -4,6 +4,7 @@ Standalone checksum consumers need this file, tests/unit/proc-verifier.c and
 tests/runtime/verify.c in their original relative layout. No daemon is used.
 """
 import errno
+from itertools import combinations
 import os
 from pathlib import Path
 import subprocess
@@ -13,9 +14,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 NAMES = 'uptime swaps sys bus fs irq sysrq-trigger asound interrupts keys timer_list'.split()
 
+OPTIONALS = ('asound', 'sysrq-trigger', 'swaps')
+ABSENCES = tuple(group for count in range(4) for group in combinations(OPTIONALS, count))
 
-def baseline(absent=False):
-    return ''.join(f'{n} absent\n' if absent and n == 'asound'
+
+def baseline(absent=()):
+    return ''.join(f'{n} absent\n' if n in absent
                    else f'{n} present 10 20 1\n' for n in NAMES)
 
 
@@ -55,17 +59,18 @@ class ProcVerifier(unittest.TestCase):
         return result
 
     def test_optional_present_and_absent(self):
-        for absent in (False, True):
+        for absent in ABSENCES:
             for mode in ('readonly', 'sandbox'):
                 with self.subTest(absent=absent, mode=mode):
-                    result, _ = self.run_mode(mode, baseline(absent), **({'ABSENT': '1'} if absent else {}))
+                    result, _ = self.run_mode(mode, baseline(absent), ABSENT=','.join(absent))
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn('PASS', result.stdout)
                     prefix = '/fixture/proc' if mode == 'readonly' else '/proc'
                     for name in NAMES:
                         self.assertIn(f'CALL stat {prefix}/{name}\n', result.stderr)
-                        if absent and name == 'asound':
-                            self.assertNotIn(f'CALL statvfs {prefix}/{name}\n', result.stderr)
+                        if name in absent:
+                            for op in ('statvfs', 'detach', 'remount'):
+                                self.assertNotIn(f'CALL {op} {prefix}/{name}\n', result.stderr)
                             continue
                         self.assertIn(f'CALL statvfs {prefix}/{name}\n', result.stderr)
                         if mode == 'sandbox':
@@ -76,8 +81,8 @@ class ProcVerifier(unittest.TestCase):
                             self.assertIn(f'CALL mask /proc/{name}\n', result.stderr)
 
     def test_capture_complete_and_roundtrip(self):
-        for absent in (False, True):
-            env = {'ABSENT': '1'} if absent else {}
+        for absent in ABSENCES:
+            env = {'ABSENT': ','.join(absent)}
             result, data = self.run_mode('capture', **env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(data.decode(), baseline(absent))
@@ -89,7 +94,7 @@ class ProcVerifier(unittest.TestCase):
         for name in NAMES:
             for op in ('stat', 'statvfs'):
                 for error in (errno.ENOENT, errno.EACCES, errno.EIO, errno.ENOTDIR):
-                    if name == 'asound' and op == 'stat' and error == errno.ENOENT:
+                    if name in OPTIONALS and op == 'stat' and error == errno.ENOENT:
                         continue
                     with self.subTest(name=name, op=op, error=error):
                         result, data = self.run_mode('capture', FAULT=op, TARGET=f'/proc/{name}', ERROR=str(error))
@@ -97,7 +102,7 @@ class ProcVerifier(unittest.TestCase):
                         self.assertIsNone(data)
 
     def test_invalid_baselines_rejected_before_operations(self):
-        valid = baseline(True)
+        valid = baseline(('asound',))
         rows = valid.splitlines(keepends=True)
         cases = {
             'empty': '', 'root-only': 'root present 10 20 1\n',
@@ -128,8 +133,11 @@ class ProcVerifier(unittest.TestCase):
             cases[f'overflow-field-{field}'] = valid.replace('10 20 1', ' '.join(values))
         for row in rows:
             cases['missing-' + row.split()[0]] = valid.replace(row, '')
+        for name in OPTIONALS:
+            # Even optional absence needs an explicit row; omission is unusable.
+            cases['missing-absent-' + name] = baseline(OPTIONALS).replace(f'{name} absent\n', '')
         for name in NAMES:
-            if name != 'asound':
+            if name not in OPTIONALS:
                 cases['required-absent-' + name] = valid.replace(f'{name} present 10 20 1', f'{name} absent')
         for mode in ('readonly', 'sandbox'):
             for label, data in cases.items():
@@ -152,9 +160,12 @@ class ProcVerifier(unittest.TestCase):
                         with self.subTest(mode=mode, name=name, op=op, error=error):
                             self.assert_failure(mode, baseline(), FAULT=op, TARGET=f'{root}/{name}', ERROR=str(error))
             # Baseline absence must match observed ENOENT, not success or other errors.
-            self.assert_failure(mode, baseline(True))
-            for error in (errno.EACCES, errno.EIO, errno.ENOTDIR):
-                self.assert_failure(mode, baseline(True), FAULT='stat', TARGET=f'{root}/asound', ERROR=str(error))
+            for name in OPTIONALS:
+                with self.subTest(mode=mode, absent=name):
+                    self.assert_failure(mode, baseline((name,)))
+                    for error in (errno.EACCES, errno.EIO, errno.ENOTDIR):
+                        self.assert_failure(mode, baseline((name,)), FAULT='stat',
+                                            TARGET=f'{root}/{name}', ERROR=str(error))
 
     def test_readonly_root_and_every_present_entry(self):
         for name in ['', *NAMES]:
@@ -163,23 +174,30 @@ class ProcVerifier(unittest.TestCase):
                 with self.subTest(name=name, op=op):
                     self.assert_failure('readonly', baseline(), FAULT=op, TARGET=target, ERROR=str(errno.EIO))
         self.assert_failure('readonly', baseline(), FAULT='mount', TARGET='/fixture/proc')
-        # asound absent before each later entry: every applicable RO check survives.
-        for name in NAMES[8:]:
-            self.assert_failure('readonly', baseline(True), ABSENT='1', FAULT='writable', TARGET=f'/fixture/proc/{name}')
+        # Every present RO check survives all optional-absence combinations,
+        # including the original regressions after absent asound.
+        for absent in ABSENCES:
+            for name in NAMES:
+                if name not in absent:
+                    with self.subTest(absent=absent, name=name):
+                        self.assert_failure('readonly', baseline(absent), ABSENT=','.join(absent),
+                                            FAULT='writable', TARGET=f'/fixture/proc/{name}')
 
     def test_sandbox_all_checks_after_absence(self):
-        for name in NAMES:
-            if name == 'asound':
-                continue
-            for op in ('device', 'inode', 'writable', 'detach', 'remount'):
-                with self.subTest(name=name, op=op):
-                    self.assert_failure('sandbox', baseline(True), ABSENT='1', FAULT=op, TARGET=f'/proc/{name}')
-        self.assert_failure('sandbox', baseline(True), ABSENT='1', MASK_DATA='1')
+        for absent in ABSENCES:
+            for name in NAMES:
+                if name in absent:
+                    continue
+                for op in ('device', 'inode', 'writable', 'detach', 'remount'):
+                    with self.subTest(absent=absent, name=name, op=op):
+                        self.assert_failure('sandbox', baseline(absent), ABSENT=','.join(absent),
+                                            FAULT=op, TARGET=f'/proc/{name}')
+            self.assert_failure('sandbox', baseline(absent), ABSENT=','.join(absent), MASK_DATA='1')
 
     def test_no_readonly_requirement_added_to_rw_source(self):
         # Existing sandbox policy requires RO retention only when captured RO.
-        data = baseline(True).replace('10 20 1', '10 20 0')
-        result, _ = self.run_mode('sandbox', data, ABSENT='1', FAULT='writable', TARGET='/proc/keys')
+        data = baseline(('asound',)).replace('10 20 1', '10 20 0')
+        result, _ = self.run_mode('sandbox', data, ABSENT='asound', FAULT='writable', TARGET='/proc/keys')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn('CALL remount ', result.stderr)
 

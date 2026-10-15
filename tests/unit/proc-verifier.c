@@ -52,7 +52,15 @@ static int inspection_error(const char *op,const char *path){
 }
 static int stub_stat(const char *p,struct stat *s){
  if(inspection_error("stat",p))return -1;
- if(getenv("ABSENT")&&strstr(p,"/asound")){errno=ENOENT;return -1;}
+ const char *absent=getenv("ABSENT"),*name=strrchr(p,'/');
+ if(absent&&name){
+  name++;
+  for(const char *a=absent;*a;){
+   size_t len=strcspn(a,",");
+   if(strlen(name)==len&&!strncmp(a,name,len)){errno=ENOENT;return -1;}
+   a+=len;if(*a)a++;
+  }
+ }
  memset(s,0,sizeof(*s));s->st_dev=10;s->st_ino=20;
  if(matches("device",p))s->st_dev++;
  if(matches("inode",p))s->st_ino++;

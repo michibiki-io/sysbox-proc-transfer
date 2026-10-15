@@ -9,11 +9,12 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
-/* Only CONFIG_SND_PROC_FS-dependent asound may be absent. Required OCI masks
- * (interrupts, keys, timer_list) remain required even on minimal kernels. */
+/* Kernel-config-dependent asound (CONFIG_SND_PROC_FS), sysrq-trigger
+ * (CONFIG_MAGIC_SYSRQ) and swaps (CONFIG_SWAP) may be absent. The other eight
+ * entries, including OCI masks interrupts, keys and timer_list, are required. */
 static const struct { const char *name; int optional; } catalog[]={
- {"uptime",0},{"swaps",0},{"sys",0},{"bus",0},{"fs",0},{"irq",0},
- {"sysrq-trigger",0},{"asound",1},{"interrupts",0},{"keys",0},{"timer_list",0}
+ {"uptime",0},{"swaps",1},{"sys",0},{"bus",0},{"fs",0},{"irq",0},
+ {"sysrq-trigger",1},{"asound",1},{"interrupts",0},{"keys",0},{"timer_list",0}
 };
 #define COUNT (sizeof(catalog)/sizeof(*catalog))
 struct entry { int present; unsigned long dev,ino,flags; };
