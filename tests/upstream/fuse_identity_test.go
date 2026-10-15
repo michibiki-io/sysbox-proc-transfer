@@ -2,6 +2,7 @@ package fs
 
 import (
 	"bazil.org/fuse"
+	"bytes"
 	"context"
 	"os"
 	"testing"
@@ -107,6 +108,88 @@ func TestGetattrDispatchInode(t *testing.T) {
 					t.Fatalf("custom=%v inode=%d: %v %+v", custom, inode, err, response)
 				}
 			}
+		}
+	}
+}
+
+// The network stream is live, not a cached cross-request snapshot. Exercise the
+// real dispatch: stable continuation and rewind have different guarantees.
+type liveDirHandle struct {
+	uncached bool
+	calls    int
+}
+
+func (h *liveDirHandle) ReadDirAllUncached() bool { return h.uncached }
+func (h *liveDirHandle) ReadDirAll(_ context.Context, r *fuse.ReadRequest) ([]fuse.Dirent, error) {
+	h.calls++
+	switch r.Pid {
+	case 1:
+		return []fuse.Dirent{{Inode: 11, Name: "a", Type: fuse.DT_Dir}, {Inode: 12, Name: "outer-secret", Type: fuse.DT_Dir}}, nil
+	case 2:
+		return []fuse.Dirent{{Inode: 13, Name: "inside", Type: fuse.DT_Dir}}, nil
+	default:
+		return nil, fuse.EIO
+	}
+}
+func TestNetworkReadDirDispatch(t *testing.T) {
+	for _, uncached := range []bool{false, true} {
+		h := &liveDirHandle{uncached: uncached}
+		server := &Server{}
+		id := server.saveHandle(h)
+		node := &plainGetattrNode{inode: 77}
+		sn := &serveNode{inode: 77, node: node}
+		read := func(pid uint32, offset int64, size int) ([]byte, error) {
+			var data []byte
+			var err error
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						if _, ok := p.(dispatchReply); !ok {
+							panic(p)
+						}
+					}
+				}()
+				err = server.handleRequest(context.Background(), node, sn, &fuse.ReadRequest{Header: fuse.Header{Pid: pid}, Handle: id, Dir: true, Offset: offset, Size: size}, func(reply interface{}) {
+					data = append([]byte{}, reply.(*fuse.ReadResponse).Data...)
+					panic(dispatchReply{})
+				})
+			}()
+			return data, err
+		}
+		first := fuse.AppendDirent(nil, fuse.Dirent{Inode: 11, Name: "a", Type: fuse.DT_Dir})
+		old := fuse.AppendDirent(append([]byte{}, first...), fuse.Dirent{Inode: 12, Name: "outer-secret", Type: fuse.DT_Dir})
+		fresh := fuse.AppendDirent(nil, fuse.Dirent{Inode: 13, Name: "inside", Type: fuse.DT_Dir})
+		data, err := read(1, 0, len(first))
+		if err != nil || !bytes.Equal(data, first) {
+			t.Fatalf("initial response: %v %x", err, data)
+		}
+		data, err = read(1, int64(len(first)), 4096)
+		if err != nil || !bytes.Equal(data, old[len(first):]) {
+			t.Fatalf("stable continuation: %v %x", err, data)
+		}
+		data, err = read(2, int64(len(first)), 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if uncached {
+			// A stale byte cookie can be EOF in the new view; it is not a
+			// complete enumeration. No bytes from the old view may be cached.
+			if len(data) != 0 || server.getHandle(id).readData != nil {
+				t.Fatal("cached old namespace view")
+			}
+		} else if !bytes.Equal(data, old[len(first):]) {
+			t.Fatal("ordinary cached stream changed")
+		}
+		data, err = read(2, 0, 4096)
+		if err != nil || !bytes.Equal(data, fresh) {
+			t.Fatalf("rewind must return complete fresh view: %v %x", err, data)
+		}
+		data, err = read(3, 0, 4096)
+		if err != fuse.EIO || data != nil {
+			t.Fatalf("operational error became successful data: %v %x", err, data)
+		}
+		if uncached && h.calls != 5 {
+			t.Fatalf("not refreshed per actual request: %d", h.calls)
 		}
 	}
 }

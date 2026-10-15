@@ -93,6 +93,8 @@ Combine network-nested protections with negative and rejected lookups: register 
 
 For setup-error injection in a disposable container configured with the test failure helper, run `python3 tests/runtime/sysfs-failures.py <task-switch-path> 2` (ENOENT) or `20` (ENOTDIR). Both require raw getdents and high-level enumeration to fail with EIO; a normal helper's genuinely absent resource must retain ENOENT. With no numeric argument the injected setup error is EIO. The switch is task-owned and removed in cleanup.
 
+Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset continuation is consistent only in the same Network while the listing stays unchanged. Sharing a handle across Networks or changing the listing makes old byte cookies undefined: continuation can be empty, truncated or rejected with EIO. Rewind with `lseek(fd, 0, SEEK_SET)`/`rewinddir` before reading the new view. The shared-handle continuation check proves absence of foreign names only; after rewind, the fixture requires the complete current name set.
+
 ## 日本語
 
 ### 実際の Sysbox 経路
@@ -226,3 +228,5 @@ Docker、privileged child、kind の smoke は別経路の結果として記録�
 network 配下の保護と、不在・拒否 Lookup を組み合わせて検査します。隔離コンテナの登録前に `lo/ifalias` の OCI mask と `lo/statistics` の readonly self-bind を用意し、自身の Mount namespace に属する capable mapped な直下の子 observer から `python3 tests/runtime/sysfs-dentry-protection.py` を実行します。自身の転送 target、深い User、loopback を rename した新しい child-owned Network だけを使い、外側と転送 tree の mount ID、identity、保護属性、detach／remount 拒否を確認します。別の task 専用 failure helper では `--failure-switch /tmp/issue5-dentry-switch` を使用でき、helper と caller から同じ新しい task 所有 file が見える必要があります。明示的な EIO と保護 dentry の維持を要求し、既存 consumer daemon と host interface は対象にしません。
 
 test failure helper を設定した使い捨てコンテナで、`python3 tests/runtime/sysfs-failures.py <task-switch-path> 2`（ENOENT）または `20`（ENOTDIR）を実行すると、setup の失敗を注入します。どちらも raw getdents と高水準列挙の EIO を要求し、正常な helper の真の不在 resource は ENOENT を維持します。数値引数を省くと EIO を注入します。switch は task 専用で、終了時に削除します。
+
+virtual-net の READDIR は要求ごとに byte stream を再生成します。非0 offset の継続が一貫するのは、同じ Network で一覧が不変の場合だけです。Network をまたぐ handle 共有や一覧変更後の古い byte cookie の結果は未定義で、空、切り詰め、EIO となりえます。新しい view は `lseek(fd, 0, SEEK_SET)`／`rewinddir` で先頭へ戻して読みます。共有 handle の継続検査は他 Network の名前が出ないことだけを確認し、巻き戻し後は現在の名前集合との完全一致を要求します。

@@ -45,7 +45,7 @@ RUN CGO_ENABLED=1 go test $(find fuse -maxdepth 1 -name '*.go' ! -name '*_test.g
 COPY tests/upstream/fuse_container_test.go /src/sysbox/sysbox-fs/fuse/fuse_container_test.go
 RUN CGO_ENABLED=1 go test $(find fuse -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) fuse/fuse_container_test.go -run '^TestNetworkOwningContainer$' -count=1
 COPY tests/upstream/fuse_identity_test.go /src/sysbox/sysbox-fs/bazil/fs/lookup_identity_test.go
-RUN cd bazil && CGO_ENABLED=1 go test $(find fs -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) fs/lookup_identity_test.go -run '^Test(LookupIdentityFreshAttributes|GetattrDispatchInode)$' -count=1
+RUN cd bazil && CGO_ENABLED=1 go test $(find fs -maxdepth 1 -name '*.go' ! -name '*_test.go' -print) fs/lookup_identity_test.go -run '^Test(LookupIdentityFreshAttributes|GetattrDispatchInode|NetworkReadDirDispatch)$' -count=1
 RUN CGO_ENABLED=1 go test ./mount -run '^TestSysfsRegistration(Snapshot|RootMetadata)$' -count=1
 RUN CGO_ENABLED=1 go test ./sysfstransfer
 RUN CGO_ENABLED=1 go test -tags 'netgo osusergo' ./seccomp -run '^TestProc(PolicyBeforeNestedTransfer|RequesterThreadPidfd|TransferInvalidNotificationDoesNotLaunch|TransferRealNotification)$' -count=1

@@ -66,6 +66,10 @@ try:
                 # The shared handle has a nonzero offset primed in another Network.
                 # Cache reuse may leak the parent's remaining interface names.
                 assert set(raw_names(shared,8192)) <= {name}, 'per-handle namespace cache bleed'
+                # A stale cookie is not a complete enumeration. Rewind the
+                # same FD in this Network and require its entire current view.
+                os.lseek(shared,0,os.SEEK_SET)
+                assert set(raw_names(shared,8192)) == {name}, 'rewound shared handle incomplete'
                 os.write(reply_w,b'R')
                 while os.read(command_r,1) == b'C':
                     check(name,mtu,{'lo','issue5a','issue5b'}-{name})

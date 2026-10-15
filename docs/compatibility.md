@@ -66,6 +66,8 @@ The subsequent metadata-ownership clarification restricts constructors to this d
 
 Enabled sysfs transfer/backing also requires a real `/tmp` directory in the registered outer rootfs (a symlink is insufficient). Private staging is attached only in the helper's private Mount namespace. Backing reports acquisition/construction ENOENT/ENOTDIR as EIO with the original diagnostic; only final network-resource resolution preserves genuine ENOENT/ENOTDIR. Transfer retains its original errno.
 
+Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset continuation is consistent only in the same Network while the listing stays unchanged. Sharing a handle across Networks or changing the listing makes old byte cookies undefined: continuation can be empty, truncated or rejected with EIO. Rewind with `lseek(fd, 0, SEEK_SET)`/`rewinddir` before reading the new view. The shared-handle continuation check proves absence of foreign names only; after rewind, the fixture requires the complete current name set.
+
 ## 日本語
 
 ### 検証済みの基準
@@ -206,3 +208,5 @@ AC7 は deferred/unrun のままです。
 backing error／checkpoint pair（head `3c777da`）は両 architecture build と focused gate が成功しました。arm64/Linux 7.1 の補助 runtime で setup EIO／ENOENT／ENOTDIR 注入時の raw／高水準 EIO、実 `/tmp` 欠落と復旧、真の不在の ENOENT、修正 direct-helper checkpoint3代表、非leader4条件、proc／sys bind回帰が成功しました。この pair では helper未設定の実 GETATTR、2コンテナ、広い interleave／cache／write／race／rejection、Docker／kind、全64条件は再実行していません。
 
 その後の metadata 所有関係の明確化は、constructor を daemon 直下の helper 本体（CAP_SYS_ADMIN と FD10 pidfd が必要）に限定します。locker は FUSE Lookup を行いません。この修正の build と focused runtime は PR 完了報告に分けて記録し、先行pairの結果を今回の再実行とは扱いません。Talos／Podの再検証も意味しません。
+
+virtual-net の READDIR は要求ごとに byte stream を再生成します。非0 offset の継続が一貫するのは、同じ Network で一覧が不変の場合だけです。Network をまたぐ handle 共有や一覧変更後の古い byte cookie の結果は未定義で、空、切り詰め、EIO となりえます。新しい view は `lseek(fd, 0, SEEK_SET)`／`rewinddir` で先頭へ戻して読みます。共有 handle の継続検査は他 Network の名前が出ないことだけを確認し、巻き戻し後は現在の名前集合との完全一致を要求します。

@@ -75,6 +75,8 @@ Scoped network requests use the owning `serveCntr` for registration, InitPid, ro
 
 A registered network protection boundary or ancestor with an existing protocol identity must remain a valid positive FUSE entry even when this caller's backing Lookup fails. Linux invalidates an expired dentry on a LOOKUP error and detaches submounts on that shared dentry in every namespace, including locked protection clones. For these policy paths only, failed Lookup returns the same protocol identity/kind with fixed read-only traversal metadata (host-root IDs, zero size; no saved network attributes). Entry/attribute TTLs stay zero. This may expose the existence of a registered policy ancestor when the caller's Network lacks it; directory enumeration, Getattr, Open, Read and Readlink still obtain and authorize the actual caller view, and missing non-policy paths retain their errors. No contents or write access are granted. Unknown identities and pre-registration paths retain the original failure. See `tests/runtime/sysfs-dentry-protection.py` for rejected deeper-User, renamed-interface and injected-failure protection retention checks.
 
+Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset continuation is consistent only in the same Network while the listing stays unchanged. Sharing a handle across Networks or changing the listing makes old byte cookies undefined: continuation can be empty, truncated or rejected with EIO. Rewind with `lseek(fd, 0, SEEK_SET)`/`rewinddir` before reading the new view. The shared-handle continuation check proves absence of foreign names only; after rewind, the fixture requires the complete current name set.
+
 ## 日本語
 
 ### 転送
@@ -254,3 +256,5 @@ ReadDir の内部失敗は errno を保持し、libc が空の成功と扱う EN
 backing helper の終了 status 200／201 は最終 resource open の ENOENT／ENOTDIR 専用です。取得・構築段階の ENOENT／ENOTDIR は診断を保持して backing 境界で EIO に変換し、transfer の errno は変えません。private staging mountpoint には外側 rootfs の実ディレクトリ `/tmp` が必要です。
 
 metadata constructor 例外は daemon 直下の mapped helper 本体に限定し、CAP_SYS_ADMIN と FD10 pidfd を検査します。locker は FUSE Lookup を行わず、この例外には含めません。
+
+virtual-net の READDIR は要求ごとに byte stream を再生成します。非0 offset の継続が一貫するのは、同じ Network で一覧が不変の場合だけです。Network をまたぐ handle 共有や一覧変更後の古い byte cookie の結果は未定義で、空、切り詰め、EIO となりえます。新しい view は `lseek(fd, 0, SEEK_SET)`／`rewinddir` で先頭へ戻して読みます。共有 handle の継続検査は他 Network の名前が出ないことだけを確認し、巻き戻し後は現在の名前集合との完全一致を要求します。
