@@ -2,8 +2,8 @@
 
 ## Contents / 目次
 
-- [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries), [Proc verifier correction](#proc-verifier-correction)
-- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲), [proc 検査の修正](#proc-検査の修正)
+- [English](#english): [Validated baseline](#validated-baseline), [Review correction validation](#review-correction-validation), [Verification boundaries](#verification-boundaries), [Proc verifier correction](#proc-verifier-correction), [Sysfs oracle portability](#sysfs-oracle-portability)
+- [日本語](#日本語): [検証済みの基準](#検証済みの基準), [レビュー修正の検証](#レビュー修正の検証), [検証範囲](#検証範囲), [proc 検査の修正](#proc-検査の修正), [sysfs 検査の移植性](#sysfs-検査の移植性)
 
 - [Sysfs consumer gate](#sysfs-consumer-gate) / [sysfs の consumer gate](#sysfs-の-consumer-gate)
 
@@ -73,6 +73,14 @@ The subsequent metadata-ownership clarification restricts constructors to this d
 Enabled sysfs transfer/backing also requires a real `/tmp` directory in the registered outer rootfs (a symlink is insufficient). Private staging is attached only in the helper's private Mount namespace. Backing reports acquisition/construction ENOENT/ENOTDIR as EIO with the original diagnostic; only final network-resource resolution preserves genuine ENOENT/ENOTDIR. Transfer retains its original errno.
 
 Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset continuation is consistent only in the same Network while the listing stays unchanged. Sharing a handle across Networks or changing the listing makes old byte cookies undefined: continuation can be empty, truncated or rejected with EIO. Rewind with `lseek(fd, 0, SEEK_SET)`/`rewinddir` before reading the new view. The shared-handle continuation check proves absence of foreign names only; after rewind, the fixture requires the complete current name set.
+
+### Sysfs oracle portability
+
+Issue #9 corrects environment-dependent runtime assertions without changing production helpers, patches, Dockerfile or upstream ABI. The namespace-local rtnetlink snapshot independently supplies names, indices and MTUs; all defaults are validated. Only a typed regular `bonding_masters` attribute absent from the interface snapshot is optional, in either registered alias. Virtual-only fixtures retain complete raw/high-level sets, rewind/cookie rules, negative lookups, metadata and protection checks. Write-policy creates a distinct owned Network inside a bounded mapped User and proves `NS_GET_USERNS` ownership before writable opens; loopback need not be the sole interface. See [portable oracle commands and contract](../tests/runtime/README.md#portable-sysfs-oracle).
+
+Prior corrected-oracle Talos diagnostic successes are inherited diagnostic evidence, not an unchanged official test pass or a rerun of this checkout. Unprivileged injected fixtures and parser/command-construction checks provide local regression evidence only. Actual Sysbox/helper runtime cases remain UNRUN without their configured disposable fixture; registered outer protection and separate failure-helper cases additionally require those fixtures. This is a fixture prerequisite limitation, not a kernel/hardware excuse or a new platform-support claim. The independent sysfs consumer gate remains unchanged.
+
+Downstream MUST pin the full immutable commit of this change plus its complete source inventory. Resolve the final clean checkout with `git rev-parse HEAD`, then pin that returned SHA with `build/sources.lock.json`; do not insert a future self-referential SHA into the commit. Verify source hashes and strict public inventory at that SHA, retain relative runtime/shared-module layout and build `manifest.json` input/output hashes, and record PASS/FAIL/UNRUN for that exact revision. No private evidence or operational logs are build inputs.
 
 ## 日本語
 
@@ -244,3 +252,27 @@ backing error／checkpoint pair（head `3c777da`）は両 architecture build と
 その後の metadata 所有関係の明確化は、constructor を daemon 直下の helper 本体（CAP_SYS_ADMIN と FD10 pidfd が必要）に限定します。locker は FUSE Lookup を行いません。この修正の build と focused runtime は PR 完了報告に分けて記録し、先行pairの結果を今回の再実行とは扱いません。Talos／Podの再検証も意味しません。
 
 virtual-net の READDIR は要求ごとに byte stream を再生成します。非0 offset の継続が一貫するのは、同じ Network で一覧が不変の場合だけです。Network をまたぐ handle 共有や一覧変更後の古い byte cookie の結果は未定義で、空、切り詰め、EIO となりえます。新しい view は `lseek(fd, 0, SEEK_SET)`／`rewinddir` で先頭へ戻して読みます。共有 handle の継続検査は他 Network の名前が出ないことだけを確認し、巻き戻し後は現在の名前集合との完全一致を要求します。
+
+### sysfs 検査の移植性
+
+Issue #9 は環境依存の runtime 判定を修正し、production helper、patch、Dockerfile、upstream ABI を変更しません。
+namespace ごとの独立した rtnetlink snapshot から名前、index、MTU を取得し、default interface も全件検査します。
+interface snapshot に含まれず、型が通常ファイルの `bonding_masters` 属性だけを、登録済みの両 alias で任意項目とします。
+仮想 interface の fixture は raw／高水準の全件集合、巻き戻しと cookie の規則、負の lookup、metadata、保護の検査を維持します。
+write-policy は有限範囲の map を持つ User 内に別 identity の Network を新設し、書き込み用 open 前に `NS_GET_USERNS` の所有関係を証明します。
+loopback が唯一の interface である必要はありません。
+[移植可能な検査の command と契約](../tests/runtime/README.md#移植可能な-sysfs-検査)を参照してください。
+
+過去の補正 oracle による Talos の成功は、継承した診断証跡です。
+変更なしの公式テストの成功や、この checkout での再実行とは扱いません。
+権限不要の模擬 fixture、parser、command 構築の検査は、ローカルの回帰証跡です。
+構成済みの使い捨て fixture がなければ実 Sysbox/helper runtime は UNRUN とし、outer 保護と failure helper の検査にはそれぞれの追加 fixture も必要です。
+これは fixture の前提不足であり、kernel／hardware を理由とした免除や新たな対応環境の主張ではありません。
+独立した sysfs consumer gate は維持します。
+
+下流は、この修正を含む不変の full commit と完全な source inventory を必ず固定します。
+最終 clean checkout で `git rev-parse HEAD` を実行し、返された SHA と `build/sources.lock.json` を固定します。
+commit 内に将来の自身の SHA を記録しません。
+同じ SHA の source hash と厳格な公開 inventory を確認し、runtime と共有 module の相対配置、build の `manifest.json` の入出力 hash を保持します。
+対象 revision の PASS／FAIL／UNRUN を区別して記録します。
+非公開の証跡や運用生ログを build 入力に含めません。

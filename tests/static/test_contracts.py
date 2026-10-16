@@ -14,6 +14,7 @@ spec = importlib.util.spec_from_file_location("build_tool", ROOT / "scripts/buil
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 PUBLIC_FILES = {
+    "tests/runtime/sysfs_oracle.py", "tests/static/test_sysfs_oracle.py",
     "tests/static/test_proc_verifier.py", "tests/unit/proc-verifier.c",
  "tests/upstream/fuse_container_test.go", "tests/upstream/sysfs_dentry_test.go", "tests/runtime/sysfs-dentry-protection.py",
  "tests/runtime/sysfs-write-policy.py", "helper/sysfs-mount-helper.c", "patches/sysfs-transfer.patch", "tests/upstream/sysfs_policy_test.go", "tests/upstream/sysfs_snapshot_test.go", "tests/upstream/sysfs_metadata_test.go", "tests/upstream/fuse_identity_test.go", "tests/unit/sysfs-checkpoint.c", "tests/unit/sysfs-liveness.c", "tests/static/test_sysfs.py", "tests/runtime/thread-sysfs.c", "tests/runtime/checkpoint-sysfs.c", "tests/runtime/sysfs-network.py", "tests/runtime/sysfs-interleave.py", "tests/runtime/sysfs-failures.py", "tests/unit/sysfs-failure-helper.c",

@@ -10,7 +10,7 @@ import errno
 import os
 from pathlib import Path
 import signal
-import socket
+from sysfs_oracle import check_network
 import subprocess
 import tempfile
 
@@ -48,8 +48,10 @@ def attack(phase):
             else:
                 assert libc.unshare(0x40000000) == 0, ctypes.get_errno()
                 subprocess.run(['ip', 'link', 'set', 'lo', 'name', 'issue5-hidden'], check=True, timeout=5)
-                assert {name for _, name in socket.if_nameindex()} == {'issue5-hidden'}
-                assert set(os.listdir(base)) == {'issue5-hidden'}, 'enumeration must use actual Network'
+                snapshot = check_network('/sys', absent=())
+                assert 'issue5-hidden' in snapshot and 'lo' not in snapshot, 'renamed loopback'
+                # Protection traversal may retain policy metadata for lo; the
+                # original absence/enumeration checks below remain authoritative.
                 for path in [base + '/lo', base + '/lo/ifalias', base + '/lo/statistics']:
                     try:
                         os.stat(path)
