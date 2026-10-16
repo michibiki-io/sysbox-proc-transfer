@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from sysfs_oracle import (check_network, check_shared_handle, netlink_snapshot,
+from sysfs_oracle import (check_fuse_network, check_shared_handle, netlink_snapshot,
                           raw_chunk)
 
 path = Path(sys.argv[1]) / 'devices/virtual/net'
@@ -17,7 +17,7 @@ import signal
 signal.alarm(120)
 
 def check(name, mtu, absent, expected):
-    observed = check_network(path.parents[2], absent=absent)
+    observed = check_fuse_network(path.parents[2], absent=absent)
     assert observed == expected, 'namespace snapshot changed'
     assert observed[name][1] == mtu, ('controlled MTU', name)
 
@@ -59,7 +59,7 @@ try:
         workers.append((pid, command_w, reply_r))
         assert os.read(reply_r,1) == b'R'
     # Prime the shared/outer network's positive/negative and attribute results.
-    parent_expected = check_network(path.parents[2], absent=('issue5a', 'issue5b'))
+    parent_expected = check_fuse_network(path.parents[2], absent=('issue5a', 'issue5b'))
     assert 'lo' in parent_expected
     for name in ('issue5a','issue5b'):
         try:
@@ -72,7 +72,7 @@ try:
         for pid, command, reply in workers:
             os.write(command,b'C')
             assert os.read(reply,1) == b'P', ('worker failure',pid)
-        assert check_network(path.parents[2], absent=('issue5a', 'issue5b')) == parent_expected
+        assert check_fuse_network(path.parents[2], absent=('issue5a', 'issue5b')) == parent_expected
     print('PASS interleaved two Network namespaces and outer/shared cache priming')
 finally:
     os.close(shared)

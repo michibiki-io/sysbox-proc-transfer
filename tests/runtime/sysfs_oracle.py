@@ -12,7 +12,8 @@ import socket
 import stat
 import struct
 
-VIEWS = ('class/net', 'devices/virtual/net')
+FUSE_VIEW = 'devices/virtual/net'
+VIEWS = ('class/net', FUSE_VIEW)
 OPTIONAL_ATTRIBUTE = 'bonding_masters'
 
 
@@ -197,11 +198,24 @@ def check_view(path, snapshot, *, class_view=False, absent=(), reader=raw_chunk)
     check_absent(path, absent)
 
 
-def check_network(base, *, observer=netlink_snapshot, absent=('absent-issue5-interface',)):
+def check_fresh_network(base, *, observer=netlink_snapshot, absent=('absent-issue5-interface',)):
+    """Fresh sysfs mounted in the requester Network: validate both views."""
     snapshot = observer()
     assert snapshot, 'empty independent snapshot'
     for relative in VIEWS:
         check_view(Path(base) / relative, snapshot, class_view=relative == 'class/net', absent=absent)
+    return snapshot
+
+
+def check_fuse_network(base, *, observer=netlink_snapshot, absent=('absent-issue5-interface',)):
+    """Inherited sysfs: only virtual-net FUSE follows the requester Network.
+
+    Native class/net retains the mount Network, even after unshare/setns; its
+    symlinks must not be assumed to resolve to this requester's FUSE view.
+    """
+    snapshot = observer()
+    assert snapshot, 'empty independent snapshot'
+    check_view(Path(base) / FUSE_VIEW, snapshot, absent=absent)
     return snapshot
 
 
