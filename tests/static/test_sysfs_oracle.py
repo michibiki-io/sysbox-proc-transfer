@@ -301,6 +301,14 @@ class Tree(unittest.TestCase):
             scope['check']('lo', 1202, {'foreign'}, dict(self.snapshot))
         with self.assertRaises(AssertionError):
             scope['check']('lo', 65536, {'foreign'}, {'lo': (1, 65536)})
+        source = (RUNTIME / 'sysfs-interleave.py').read_text()
+        self.assertIn("'issue5-prime','issue5-peer'", source)
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'check_shared_handle']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([ast.dump(arg) for arg in calls[0].args],
+                         [ast.dump(ast.Name(id=name, ctx=ast.Load()))
+                          for name in ('shared', 'path', 'expected')])
         # Execute the actual parent priming and repeated-parent oracle calls too.
         for statement in tree.body:
             if isinstance(statement, ast.FunctionDef):
@@ -338,6 +346,8 @@ class Tree(unittest.TestCase):
         observer.assert_called_once_with('/sys', absent=())
         fake_os._exit.assert_called_once_with(0)
         fake_os.listdir.assert_called_once_with('/sys/devices/virtual/net/lo')
+        self.assertIn('check(paths, identities, mount_ids)', source)
+        self.assertIn("paths = protected + [target + path[4:] for path in protected]", source)
         fake_os._exit.reset_mock()
         (self.base / oracle.FUSE_VIEW / 'issue5-hidden/mtu').write_text('999')
         with patch('builtins.print'):

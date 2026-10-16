@@ -54,7 +54,7 @@
     "tests/static/test_lifecycle.py": "e37dfe690b743a9e81167c89c98715e1b130ac7241be830fcfba96fe1c7a546c",
     "tests/static/test_proc_verifier.py": "7fc63ce2722ec9b73939bba815be74e016bd27e539665fcf5b67d7f52ad27696",
     "tests/static/test_sysfs.py": "9a8467bd47475a8548d0b4faefe4e8b90b16b2bac26d996e11883461d19d375a",
-    "tests/static/test_sysfs_oracle.py": "733ba542a255d26eb06de1e44db17ac73874adbf63c11ae9ee8f02094b1a3cfa",
+    "tests/static/test_sysfs_oracle.py": "f0e3d4fa25bdfe2738407dfd00447bcc079a39b5e82cfd888fb9197f5cee8033",
     "tests/unit/helper-checkpoint.c": "a7c82acb5c67f60998941939d1db080cf71dd84ba48cf7f558711a228fa64f3a",
     "tests/unit/helper-liveness.c": "4057cb5bf928be4f23ce40781304ae698bd92ef01d2ec3843ec99855007d5ec0",
     "tests/unit/lifecycle.c": "bdec46a5225b48a8d00bb992b3258db21cb70c118166aee4f86d3a024f24b5d3",
