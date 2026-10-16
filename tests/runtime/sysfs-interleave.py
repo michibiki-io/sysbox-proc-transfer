@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from sysfs_oracle import (check_network, check_stale, netlink_snapshot,
-                          raw_chunk, checked_names, interface_names, raw_entries)
+from sysfs_oracle import (check_network, check_shared_handle, netlink_snapshot,
+                          raw_chunk)
 
 path = Path(sys.argv[1]) / 'devices/virtual/net'
 libc = ctypes.CDLL(None, use_errno=True)
@@ -46,13 +46,7 @@ try:
                 # Cache reuse may leak the parent's remaining interface names.
                 expected = netlink_snapshot()
                 assert name in expected and expected[name][1] == mtu
-                check_stale(shared, path, expected)
-                # A stale cookie is not a complete enumeration. Rewind the
-                # same FD in this Network and require its entire current view.
-                os.lseek(shared,0,os.SEEK_SET)
-                # Validate the very same rewound handle, reading all chunks to EOF.
-                names = checked_names(path, raw_entries(shared))
-                assert interface_names(path, names, expected) == set(expected), 'rewound shared handle incomplete'
+                check_shared_handle(shared, path, expected)
                 os.write(reply_w,b'R')
                 while os.read(command_r,1) == b'C':
                     check(name,mtu,{'lo','issue5a','issue5b','issue5-prime','issue5-peer'}-{name}, expected)

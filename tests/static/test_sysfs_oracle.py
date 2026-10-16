@@ -198,6 +198,70 @@ class Tree(unittest.TestCase):
         with self.assertRaises(AssertionError):
             oracle.check_stale(0, path, self.snapshot, Mock(side_effect=[[('foreign', 4)], OSError(errno.EIO, 'stale')]))
 
+    def test_shared_handle_stale_then_rewind_then_complete_on_same_fd(self):
+        path = self.base / 'devices/virtual/net'
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        # Consume one interface, leaving another for the stale-cookie phase.
+        while True:
+            primed = oracle.raw_chunk(fd, 40)
+            self.assertTrue(primed)
+            if any(name in self.snapshot for name, _ in primed):
+                break
+        real_lseek = os.lseek
+        initial_offset = real_lseek(fd, 0, os.SEEK_CUR)
+        self.assertGreater(initial_offset, 0)
+        events = []
+
+        def read(actual_fd):
+            self.assertEqual(actual_fd, fd)
+            offset = real_lseek(actual_fd, 0, os.SEEK_CUR)
+            entries = oracle.raw_chunk(actual_fd, 40)
+            events.append(('read', actual_fd, offset, entries))
+            return entries
+
+        def rewind(actual_fd, offset, whence):
+            result = real_lseek(actual_fd, offset, whence)
+            events.append(('rewind', actual_fd, result))
+            return result
+
+        with patch.object(oracle.os, 'lseek', side_effect=rewind) as seek:
+            oracle.check_shared_handle(fd, path, self.snapshot, reader=read)
+        seek.assert_called_once_with(fd, 0, os.SEEK_SET)
+        split = next(i for i, event in enumerate(events) if event[0] == 'rewind')
+        stale, full = events[:split], events[split + 1:]
+        self.assertEqual(events[split], ('rewind', fd, 0))
+        self.assertTrue(stale)
+        self.assertEqual(stale[0][2], initial_offset)
+        self.assertTrue(stale[0][3])
+        self.assertEqual(stale[-1][3], [])
+        self.assertTrue(full)
+        self.assertEqual(full[0][2], 0)
+        self.assertEqual(full[-1][3], [])
+        self.assertTrue(all(event[1] == fd for event in events))
+        stale_names = oracle.checked_names(path, [entry for event in stale for entry in event[3]])
+        full_names = oracle.checked_names(path, [entry for event in full for entry in event[3]])
+        self.assertLess(stale_names, set(self.snapshot))
+        self.assertEqual(full_names, set(self.snapshot))
+
+    def test_shared_handle_rejects_incomplete_rewound_snapshot(self):
+        path = self.base / 'devices/virtual/net'
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        self.assertTrue(oracle.raw_chunk(fd, 40))
+        with self.assertRaisesRegex(AssertionError, 'rewound shared handle incomplete'):
+            oracle.check_shared_handle(fd, path, dict(self.snapshot, missing=(9, 1500)))
+
+    def test_shared_handle_rejects_foreign_stale_entries_before_rewind(self):
+        path = self.base / 'devices/virtual/net'
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, fd)
+        self.assertTrue(oracle.raw_chunk(fd, 40))
+        with patch.object(oracle.os, 'lseek', wraps=os.lseek) as seek:
+            with self.assertRaisesRegex(AssertionError, 'foreign network entry'):
+                oracle.check_shared_handle(fd, path, {})
+        seek.assert_not_called()
+
     def test_renamed_dentry_layout_preserves_lo_absence(self):
         self.snapshot = {'issue5-hidden': (1, 65536), 'tunl0': (7, 1480)}
         self.build(self.snapshot, attr=True)
@@ -222,9 +286,12 @@ class Tree(unittest.TestCase):
             scope['check']('lo', 65536, {'foreign'}, {'lo': (1, 65536)})
         source = (RUNTIME / 'sysfs-interleave.py').read_text()
         self.assertIn("'issue5-prime','issue5-peer'", source)
-        self.assertIn('check_stale(shared, path, expected)', source)
-        self.assertIn('os.lseek(shared,0,os.SEEK_SET)', source)
-        self.assertIn('raw_entries(shared)', source)
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'check_shared_handle']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([ast.dump(arg) for arg in calls[0].args],
+                         [ast.dump(ast.Name(id=name, ctx=ast.Load()))
+                          for name in ('shared', 'path', 'expected')])
 
     def test_dentry_absent_phase_reaches_shared_oracle(self):
         self.snapshot = {'issue5-hidden': (1, 65536), 'tunl0': (7, 1480)}

@@ -222,6 +222,15 @@ def check_stale(fd, path, snapshot, reader=raw_chunk):
         interface_names(Path(path), names, snapshot)
 
 
+def check_shared_handle(fd, path, snapshot, reader=raw_chunk):
+    check_stale(fd, path, snapshot, reader)
+    # A stale cookie is not a complete enumeration. Rewind the same FD in
+    # this Network and require its entire current view, reading to EOF.
+    os.lseek(fd, 0, os.SEEK_SET)
+    names = checked_names(path, raw_entries(fd, reader))
+    assert interface_names(path, names, snapshot) == set(snapshot), 'rewound shared handle incomplete'
+
+
 def namespace_identity(path):
     attrs = os.stat(path)
     return attrs.st_dev, attrs.st_ino
