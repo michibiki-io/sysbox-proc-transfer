@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""Disposable private Network only: preserve virtual-net nobody/write policy.
-Run once as registered outer root and once as capable direct-child root, each
-inside a newly created Network namespace. Never run against host interfaces.
+"""Disposable mapped-root fixture only; creates and proves its own private Net.
+Run once as registered outer root and once as capable direct-child root.
 """
 import errno
 import os
 from pathlib import Path
-import socket
+from sysfs_oracle import VIEWS, create_owned_network, netlink_snapshot
 
-assert os.geteuid() == 0
-assert {name for _,name in socket.if_nameindex()} == {'lo'}, 'private loopback-only Network required'
-assert int(Path('/proc/self/uid_map').read_text().split()[2]) < 4294967295, 'bounded mapped User required'
-path=Path('/sys/devices/virtual/net/lo/mtu')
-before=path.read_text()
-for _ in range(3):
-    # Repeated stat includes Getattr on a previously looked-up FUSE inode.
-    attrs=path.stat()
-    assert (attrs.st_uid,attrs.st_gid)==(65534,65534), (attrs.st_uid,attrs.st_gid)
-for flags in (os.O_WRONLY,os.O_RDWR,os.O_WRONLY|os.O_TRUNC):
-    try:
-        fd=os.open(path,flags)
-    except OSError as e:
-        assert e.errno in (errno.EACCES,errno.EPERM,errno.EROFS),e
-    else:
-        os.close(fd)
-        raise AssertionError('virtual-net writable Open permitted')
-# An independently read raw sysfs class path must retain the original value.
-assert path.read_text()==before
-assert Path('/sys/class/net/lo/mtu').read_text()==before
-print('PASS mapped root nobody Lookup/Getattr and write denial; private mtu unchanged')
+
+def check_policy(base=Path('/sys'), observer=netlink_snapshot, opener=os.open):
+    snapshot = observer()
+    assert 'lo' in snapshot, 'private loopback required'
+    before = snapshot['lo'][1]
+    paths = [Path(base) / view / 'lo/mtu' for view in VIEWS]
+    for path in paths:
+        assert int(path.read_text()) == before, ('initial MTU', path)
+        for _ in range(3):
+            attrs = path.stat()
+            assert (attrs.st_uid, attrs.st_gid) == (65534, 65534), (path, attrs.st_uid, attrs.st_gid)
+        for flags in (os.O_WRONLY, os.O_RDWR, os.O_WRONLY | os.O_TRUNC):
+            try:
+                fd = opener(path, flags)
+            except OSError as error:
+                assert error.errno in (errno.EACCES, errno.EPERM, errno.EROFS), error
+            else:
+                os.close(fd)
+                raise AssertionError(('virtual-net writable Open permitted', path))
+    assert observer() == snapshot, 'Network metadata changed during denied writes'
+    for path in paths:
+        assert int(path.read_text()) == before, ('MTU changed', path)
+
+
+def main():
+    create_owned_network()
+    check_policy()
+    print('PASS mapped root nobody Lookup/Getattr and write denial; private MTU unchanged')
+
+
+if __name__ == '__main__':
+    main()
