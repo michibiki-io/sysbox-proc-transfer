@@ -101,9 +101,9 @@ unshare --user --map-root-user --mount --pid --fork -- \
 
 Use a fresh caller-owned target path for each shared/new-net and RW/RO case and remove the empty leader-side directory afterward. Record `id`, uid_map/gid_map and capability/NNP/seccomp state within that same entry path. The unchanged bwrap fixture deliberately keeps its existing caller UID map; this additional probe covers the root mapping without changing that invocation. A `/dev/null` mask can become inaccessible under the mandatory recursive nodev floor: the observer requires unchanged identity and either empty reads or EACCES with nodev, never readable contents.
 
-CAP_SYS_ADMIN and CAP_NET_ADMIN here are **child User namespace** capabilities for the surviving observer and its owned network fixtures, never outer Pod or initial-host capabilities. The fresh-Net nonleader creates `issue5-tid` only in its private Network and requires the leader’s interface membership and indices to remain unchanged. The nonleader probe checks a separate thread Mount/Network namespace, source identities, all security floors, detach/move and RO-remount denial. Its independent observer compares class/net and protected devices/virtual/net with netlink, per-interface ifindex/mtu, symlink targets, raw getdents and high-level enumeration. `sysfs-interleave.py` primes a nonzero offset on a shared directory handle in its own disposable child-owned parent Network, then repeatedly switches between two owned Network namespaces with different interface names/MTUs and shared-namespace positive/negative lookup and attribute priming. Only disposable fixture interfaces may be changed.
+CAP_SYS_ADMIN and CAP_NET_ADMIN here are **child User namespace** capabilities for the surviving observer and its owned network fixtures, never outer Pod or initial-host capabilities. The fresh-Net nonleader creates `issue5-tid` only in its private Network and requires the leader’s interface membership and indices to remain unchanged. The nonleader probe checks a separate thread Mount/Network namespace, source identities, all security floors, detach/move and RO-remount denial. On that fresh sysfs mount, its independent observer compares class/net and protected devices/virtual/net with netlink, per-interface ifindex/mtu, symlink targets, raw getdents and high-level enumeration. `sysfs-interleave.py` primes a nonzero offset on a shared directory handle in its own disposable child-owned parent Network, then repeatedly switches between two owned Network namespaces with different interface names/MTUs and shared-namespace positive/negative lookup and attribute priming. Only disposable fixture interfaces may be changed.
 
-Use `tests/unit/sysfs-checkpoint.c`, `tests/runtime/checkpoint-sysfs.c` and `checkpoints.py --filesystem sysfs` for the same 32-case direct-helper race matrix. Bind `/tmp/issue5-repo` into that sandbox too. FD7 is Network. The synthetic notification remains a direct fixture, separate from the real mount probe. Use `helper-rejections.py --filesystem sysfs` for existing modes plus wrong-network, deeper-user and backing-symlink. The last mode calls the real backing helper directly: final `lo/subsystem` Readlink succeeds, while Lookup/Open through that link fail with ELOOP. Run `sysfs-write-policy.py` as outer mapped root and capable direct-child root, each allowing the script to create and prove ownership of a fresh private Network; it checks nobody Lookup/Getattr, write denial and unchanged MTU. A child UID map may start at outer UID0; the fixture requires a bounded map rather than mistaking that for initial-host User authority. No failed source acquisition may be skipped.
+Use `tests/unit/sysfs-checkpoint.c`, `tests/runtime/checkpoint-sysfs.c` and `checkpoints.py --filesystem sysfs` for the same 32-case direct-helper race matrix. Bind `/tmp/issue5-repo` into that sandbox too. FD7 is Network. The synthetic notification remains a direct fixture, separate from the real mount probe. Use `helper-rejections.py --filesystem sysfs` for existing modes plus wrong-network, deeper-user and backing-symlink. The last mode calls the real backing helper directly: final `lo/subsystem` Readlink succeeds, while Lookup/Open through that link fail with ELOOP. Run `sysfs-write-policy.py` as outer mapped root and capable direct-child root, each allowing the script to create and prove ownership of a fresh private Network; it checks nobody Lookup/Getattr, write denial and unchanged MTU only on protected devices/virtual/net. A child UID map may start at outer UID0; the fixture requires a bounded map rather than mistaking that for initial-host User authority. No failed source acquisition may be skipped.
 
 For complete policy coverage, provision the disposable container with non-default masked files, RO paths and a nested protected mount before registration, then compare all sources with the capable observer. Do not remove policy to make a probe pass. Test masked contents and write denial separately from missing paths. Compile the test-only `sysfs-failure-helper.c` with trusted `TEST_HELPER` and `TEST_TRIGGER` absolute paths and use it only in a separate disposable daemon. `sysfs-failures.py` opens the network directory before creating the task-owned switch, then requires EIO from raw getdents and high-level enumeration and unchanged target on failed actual mount. The switch must address the same task-owned file from the helper host view and caller container view. Do not change a consumer daemon.
 
@@ -117,13 +117,13 @@ Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset
 
 ### Portable sysfs oracle
 
-Issue #9 changes runtime tests only; production helpers, patches and the upstream ABI stay unchanged. Keep `sysfs_oracle.py` beside the four `sysfs-*.py` callers (`network`, `interleave`, `write-policy`, `dentry-protection`). Thread and checkpoint/lifecycle observers reach the same CLI through the existing repository bind; no runtime source rewriting is needed.
+Issues #9 and #11 change runtime tests only; production helpers, patches and the upstream ABI stay unchanged. Keep `sysfs_oracle.py` beside the four `sysfs-*.py` callers (`network`, `interleave`, `write-policy`, `dentry-protection`). Thread and checkpoint/lifecycle observers reach the same CLI through the existing repository bind; no runtime source rewriting is needed.
 
-`RTM_GETLINK` in the observer's current Network independently supplies every interface name, ifindex and MTU. The owned virtual-only fixtures compare complete high-level and raw getdents sets in both `class/net` and `devices/virtual/net` with that snapshot. Additional default interfaces are allowed and all their metadata is checked. Only the exact `bonding_masters` entry may be excluded, only when it is a regular file and absent from the netlink interface set. Its presence is optional in either registered FUSE alias. Unknown entries, malformed types, symlinks, path/traversal errors and failed netlink observations fail; an interface named `bonding_masters` cannot hide as an attribute. Interface class symlinks, subsystem links, negative lookups and namespace/cache isolation remain checked. Hardware devices, interface counts and module loading are not prerequisites for these virtual-only fixtures.
+`RTM_GETLINK` in the observer's current Network independently supplies every interface name, ifindex and MTU. For fresh sysfs mounted in the requester Network, `check_fresh_network()` compares complete high-level and raw getdents sets in both `class/net` and `devices/virtual/net` with that snapshot. `sysfs-network.py`, used by thread and checkpoint/lifecycle observers, always uses this fresh-mount contract. Inherited native `class/net` remains associated with the mount Network after unshare/setns; its symlinks need not resolve to the current FUSE view. Interleave (parent and both children) and the dentry absent-interface phase therefore use `check_fuse_network()` to check only the per-request `devices/virtual/net` FUSE subtree. Additional default interfaces are allowed and all their metadata is checked. Only the exact `bonding_masters` entry may be excluded, only when it is a regular file and absent from the netlink interface set. Its presence is optional in each checked view. Unknown entries, malformed types, symlinks, path/traversal errors and failed netlink observations fail; an interface named `bonding_masters` cannot hide as an attribute. Fresh-mount class symlinks, subsystem links in each checked view, negative lookups and namespace/cache isolation remain checked. Hardware devices, interface counts and module loading are not prerequisites for these virtual-only fixtures.
 
-Raw enumeration parses every bounded record and continues to EOF, including after rewind. A shared FD's stale nonzero cookie may yield a partial/empty list or EIO; every returned entry must still belong to the current Network, and other errors such as EINVAL fail. Interleave preserves parent veth/shared-FD priming, controlled names/MTUs and absent parent/other-child names, while validating all default interfaces. The dentry absent-interface phase uses this oracle after loopback rename and retains `lo` non-enumerability and original/transferred protection checks.
+Raw enumeration parses every bounded record and continues to EOF, including after rewind. A shared FD's stale nonzero cookie may yield a partial/empty list or EIO; every returned entry must still belong to the current Network, and other errors such as EINVAL fail. Interleave preserves parent veth/shared-FD priming, controlled names/MTUs and absent parent/other-child names, while validating all default interfaces. The dentry absent-interface phase uses the FUSE-only oracle after loopback rename and retains `lo` non-enumerability and original/transferred protection checks.
 
-Before **any writable open**, write-policy requires root with bounded UID and GID maps, creates a new Network with `unshare(CLONE_NEWNET)`, checks a distinct Network identity, and compares its `NS_GET_USERNS` owner FD with the unchanged current User identity. Failure refuses the test before opens. Interface count never proves ownership. It then requires nobody UID/GID65534, denied WRONLY/RDWR/TRUNC opens through both views, and unchanged loopback MTU in sysfs and independent rtnetlink. Additional defaults are allowed. In an already registered disposable mapped-root Sysbox container with the trusted helper configured, run both caller contexts (the script creates its own Net):
+Before **any writable open**, write-policy requires root with bounded UID and GID maps, creates a new Network with `unshare(CLONE_NEWNET)`, checks a distinct Network identity, and compares its `NS_GET_USERNS` owner FD with the unchanged current User identity. Failure refuses the test before opens. Interface count never proves ownership. It then requires nobody UID/GID65534, denied WRONLY/RDWR/TRUNC opens only through protected `devices/virtual/net`, and unchanged loopback MTU in sysfs and independent rtnetlink. Additional defaults are allowed. In an already registered disposable mapped-root Sysbox container with the trusted helper configured, run both caller contexts (the script creates its own Net):
 
 ```sh
 python3 tests/runtime/sysfs-write-policy.py
@@ -138,7 +138,7 @@ python3 -m unittest discover -s tests/static -p test_contracts.py -v
 python3 -m unittest discover -s tests/static -p test_sysfs.py -v
 ```
 
-These fixtures inject independent snapshots/readers and exercise real getdents parsing on temporary directories; they do not establish real FUSE or mount behavior. Report PASS/FAIL/UNRUN for each exact revision. Actual Sysbox probes, interleave, write-policy and checkpoint runtime cases are UNRUN without a configured Sysbox/helper fixture; dentry protections additionally require a registered outer mask/read-only fixture; error injection requires a separately configured failure helper. Missing fixtures are not kernel/hardware failures. Prior operator diagnostic runs (including corrected-oracle Talos results) are inherited diagnostic evidence, not an official pass of this checkout.
+These fixtures inject independent snapshots/readers and exercise real getdents parsing on temporary directories; they do not establish real FUSE or mount behavior. Report PASS/FAIL/UNRUN for each exact revision. Actual Sysbox probes, interleave, write-policy and checkpoint runtime cases are UNRUN without a configured Sysbox/helper fixture; dentry protections additionally require a registered outer mask/read-only fixture; error injection requires a separately configured failure helper. Missing fixtures are not kernel/hardware failures. The unchanged official downstream v0.4.1 suite passed the original proc/bwrap/protection checks and eight fresh-sysfs cases, then FAILED at interleave; later write-policy, stress, helper rejection/lifecycle and supporting cases were UNRUN. A separate minimal diagnostic confirmed current-Network FUSE views alongside differing inherited native views; it is inherited diagnostic evidence, not an official suite pass or a rerun of this checkout. Write-policy and dentry scope corrections were identified by source inspection, not a claimed runtime failure.
 
 Downstream **MUST** pin the immutable full commit containing this change and its source inventory, including the shared module and regressions. A commit cannot embed its own future SHA: on the final clean checkout resolve `git rev-parse HEAD`, pin that resulting full SHA, verify `build/sources.lock.json` with `scripts/build.py`'s `load_lock()` and run the strict `test_contracts.py` inventory check. Fetch all public files at that same SHA in their relative layout. For paired builds retain the generated `manifest.json` input/output hashes and that checkout SHA. A branch name, historical binary release or diagnostic source edit does not identify these tests.
 
@@ -300,7 +300,7 @@ observer が参照する検査専用 path `/tmp/issue5-repo` にリポジトリ�
 読み取りが成功する場合は空であることを要求し、内容の露出は許可しません。
 
 非 leader probe は thread 固有 Mount/Network、全 source identity と保護属性、detach/move、RO 解除拒否を確認します。
-独立 observer は netlink と class/net、保護された devices/virtual/net、ifindex/mtu、symlink、raw getdents、高水準列挙を照合します。
+新規 sysfs mount の独立 observer は netlink と class/net、保護された devices/virtual/net、ifindex/mtu、symlink、raw getdents、高水準列挙を照合します。
 fresh-Net の非 leader は private Network にだけ `issue5-tid` を作成し、leader の interface 一覧と ifindex が不変であることを検査します。
 `sysfs-interleave.py` は自身の child User が所有する Network で共有 directory handle の非 zero offset を先行取得し、異なる名前と MTU の二つの Network namespace を交互に読み、共有側の正と負の lookup、属性 cache の先行取得も検査します。
 変更対象は自身の隔離 fixture の interface だけです。
@@ -310,7 +310,7 @@ fresh-Net の非 leader は private Network にだけ `issue5-tid` を作成し�
 FD7 は Network で、合成通知の直接 fixture と実 mount probe の証跡を分けます。
 拒否検査は `helper-rejections.py --filesystem sysfs` の既存条件と wrong-network、deeper-user、backing-symlink を使います。
 backing-symlink は実 helper で末尾の Readlink 成功と、そのリンクを通る Lookup/Open の ELOOP を確認します。
-`sysfs-write-policy.py` は外側 mapped root と capable な直下の子 root で、スクリプト自身が新設して所有関係を証明する private Network を使い、nobody 所有、書き込み拒否、MTU 不変を確認します。
+`sysfs-write-policy.py` は外側 mapped root と capable な直下の子 root で、スクリプト自身が新設して所有関係を証明する private Network を使い、保護対象の devices/virtual/net だけで nobody 所有、書き込み拒否、MTU 不変を確認します。
 source の取得失敗を省略しません。
 
 非既定の mask、RO path、入れ子の保護 mount は登録前に隔離コンテナへ構成します。
@@ -333,31 +333,34 @@ virtual-net の READDIR は要求ごとに byte stream を再生成します。�
 
 ### 移植可能な sysfs 検査
 
-Issue #9 は runtime テストだけを変更し、production helper、patch、upstream ABI を維持します。
+Issue #9 と #11 は runtime テストだけを変更し、production helper、patch、upstream ABI を維持します。
 `sysfs_oracle.py` は4つの呼び出し元 `sysfs-network.py`、`sysfs-interleave.py`、`sysfs-write-policy.py`、`sysfs-dentry-protection.py` と同じ場所に配置します。
 thread と checkpoint／lifecycle の observer も、既存の repository bind を通して同じ CLI を呼び出します。
 実行時のソース書き換えは不要です。
 
 観測元の現在の Network で `RTM_GETLINK` を取得し、全 interface の名前、ifindex、MTU を独立した比較基準とします。
-所有する仮想 interface だけの fixture では、`class/net` と `devices/virtual/net` の高水準列挙と raw getdents の全件集合を照合します。
+要求元 Network で新規 mount した sysfs には `check_fresh_network()` を使い、`class/net` と `devices/virtual/net` の高水準列挙と raw getdents の全件集合を照合します。
+thread と checkpoint／lifecycle の `sysfs-network.py` は常にこの新規 mount の契約を使います。
+継承した native `class/net` は unshare／setns 後も mount 時の Network に結び付き、その symlink が現在の FUSE view へ解決されるとは限りません。
+interleave の親と両方の子、および dentry の absent-interface phase は `check_fuse_network()` を使い、要求ごとに Network を反映する `devices/virtual/net` の FUSE subtree だけを検査します。
 追加の default interface を許容し、全件の metadata を検査します。
 `bonding_masters` だけは、通常ファイルであり netlink の interface 集合に含まれない場合に限り、属性として除外します。
-この属性は登録済み FUSE のどちらの alias でも存在を必須としません。
+この属性は各検査対象 view で存在を必須としません。
 未知の entry、不正な型や symlink、path 解決や traversal のエラー、netlink 観測失敗は検査失敗とします。
 同名の実 interface を属性として隠すことはできません。
-class の symlink、subsystem link、負の lookup、namespace と cache の分離の検査を維持します。
+新規 mount の class symlink、各検査対象 view の subsystem link、負の lookup、namespace と cache の分離の検査を維持します。
 仮想 interface の fixture に hardware、固定 interface 数、module 読み込みは要求しません。
 
 raw 列挙は各 record の境界を検査し、巻き戻し後も EOF まで全件を読みます。
 共有 FD の古い非0 cookie は部分一覧、空、EIO を許容しますが、返った全 entry が現在の Network に属する必要があります。
 EINVAL など他のエラーは失敗とします。
 interleave は親 veth と共有 FD の先行取得、制御した名前と MTU、親と別の子の名前の不在を維持し、default interface も全件検査します。
-dentry の absent-interface phase も loopback rename 後に同じ oracle を使い、`lo` の列挙拒否と元／転送 tree の保護検査を維持します。
+dentry の absent-interface phase も loopback rename 後に FUSE 専用 oracle を使い、`lo` の列挙拒否と元／転送 tree の保護検査を維持します。
 
 write-policy は書き込み用 open の前に、UID/GID map が有限範囲の root であることを確認し、`unshare(CLONE_NEWNET)` で Network を新設します。
 Network identity が変わったこと、`NS_GET_USERNS` の owner FD が不変の現在の User identity と一致することを確認します。
 失敗時は open 前に検査を拒否し、interface 数を所有の証明に使いません。
-両 view の nobody UID/GID65534、WRONLY／RDWR／TRUNC open の拒否、sysfs と独立した rtnetlink の loopback MTU 不変を確認します。
+保護対象の `devices/virtual/net` だけで nobody UID/GID65534、WRONLY／RDWR／TRUNC open の拒否、sysfs と独立した rtnetlink の loopback MTU 不変を確認します。
 追加の default interface を許容します。
 信頼する helper を設定済みで、登録済みの使い捨て mapped-root Sysbox コンテナ内から、両方の caller 条件で実行します。
 Network はスクリプトが新設します。
@@ -384,7 +387,11 @@ python3 -m unittest discover -s tests/static -p test_sysfs.py -v
 構成済み Sysbox/helper fixture がない場合、実 Sysbox probe、interleave、write-policy、checkpoint runtime は UNRUN とします。
 dentry 保護には登録済み outer mask／read-only fixture、エラー注入には別途構成した failure helper も必要です。
 fixture の不足を kernel や hardware の失敗と扱いません。
-補正 oracle による過去の Talos 結果を含む運用者の診断結果は、継承した診断証跡であり、この checkout の公式成功とは区別します。
+変更なしの公式 downstream v0.4.1 suite は元の proc／bwrap／保護検査と新規 sysfs の8ケースに成功した後、interleave で FAILED となりました。
+後続の write-policy、stress、helper rejection／lifecycle、補助検査は UNRUN です。
+別の最小診断では、現在の Network に一致する FUSE view と、異なる継承 native view を確認しています。
+これは継承した診断証跡であり、公式 suite の成功や、この checkout での再実行とは扱いません。
+write-policy と dentry の対象修正はソース調査によるもので、実行時の失敗を主張するものではありません。
 
 下流は、この修正を含む不変の full commit と source inventory を必ず固定します。
 共有 module と回帰テストも対象です。

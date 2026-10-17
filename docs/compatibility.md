@@ -76,9 +76,9 @@ Virtual-net READDIR regenerates its byte stream for each request. Nonzero-offset
 
 ### Sysfs oracle portability
 
-Issue #9 corrects environment-dependent runtime assertions without changing production helpers, patches, Dockerfile or upstream ABI. The namespace-local rtnetlink snapshot independently supplies names, indices and MTUs; all defaults are validated. Only a typed regular `bonding_masters` attribute absent from the interface snapshot is optional, in either registered alias. Virtual-only fixtures retain complete raw/high-level sets, rewind/cookie rules, negative lookups, metadata and protection checks. Write-policy creates a distinct owned Network inside a bounded mapped User and proves `NS_GET_USERNS` ownership before writable opens; loopback need not be the sole interface. See [portable oracle commands and contract](../tests/runtime/README.md#portable-sysfs-oracle).
+Issues #9 and #11 correct environment-dependent runtime assertions without changing production helpers, patches, Dockerfile or upstream ABI. The namespace-local rtnetlink snapshot independently supplies names, indices and MTUs; all defaults are validated. Fresh mounts in the requester Network use `check_fresh_network()` for both native `class/net` and FUSE `devices/virtual/net`; thread and checkpoint/lifecycle observers retain this contract. On inherited sysfs, native class views retain the mount Network. Interleave (parent and both children) and dentry absent-interface checks use `check_fuse_network()` for per-request virtual-net only. Write-policy applies nobody ownership, denied opens and MTU reads only to that protected FUSE subtree. Only a typed regular `bonding_masters` attribute absent from the interface snapshot is optional in each checked view. Virtual-only fixtures retain complete raw/high-level sets, rewind/cookie rules, negative lookups, metadata and protection checks. Write-policy creates a distinct owned Network inside a bounded mapped User and proves `NS_GET_USERNS` ownership before writable opens; loopback need not be the sole interface. See [portable oracle commands and contract](../tests/runtime/README.md#portable-sysfs-oracle).
 
-Prior corrected-oracle Talos diagnostic successes are inherited diagnostic evidence, not an unchanged official test pass or a rerun of this checkout. Unprivileged injected fixtures and parser/command-construction checks provide local regression evidence only. Actual Sysbox/helper runtime cases remain UNRUN without their configured disposable fixture; registered outer protection and separate failure-helper cases additionally require those fixtures. This is a fixture prerequisite limitation, not a kernel/hardware excuse or a new platform-support claim. The independent sysfs consumer gate remains unchanged.
+The unchanged official downstream v0.4.1 suite passed original proc/bwrap/protection checks and eight fresh-sysfs cases, then FAILED at interleave. Later write-policy, stress, helper rejection/lifecycle and supporting cases were UNRUN. The separate minimal diagnostic found correct current-Network FUSE views alongside differing inherited native views; it is inherited diagnostic evidence, not an official suite pass or a rerun of this checkout. Write-policy and dentry scope corrections come from source inspection, not claimed runtime failures. Unprivileged injected fixtures and parser/command-construction checks provide local regression evidence only. Actual Sysbox/helper runtime cases remain UNRUN without their configured disposable fixture; registered outer protection and separate failure-helper cases additionally require those fixtures. This is a fixture prerequisite limitation, not a kernel/hardware excuse or a new platform-support claim. The independent sysfs consumer gate remains unchanged.
 
 Downstream MUST pin the full immutable commit of this change plus its complete source inventory. Resolve the final clean checkout with `git rev-parse HEAD`, then pin that returned SHA with `build/sources.lock.json`; do not insert a future self-referential SHA into the commit. Verify source hashes and strict public inventory at that SHA, retain relative runtime/shared-module layout and build `manifest.json` input/output hashes, and record PASS/FAIL/UNRUN for that exact revision. No private evidence or operational logs are build inputs.
 
@@ -255,16 +255,23 @@ virtual-net の READDIR は要求ごとに byte stream を再生成します。�
 
 ### sysfs 検査の移植性
 
-Issue #9 は環境依存の runtime 判定を修正し、production helper、patch、Dockerfile、upstream ABI を変更しません。
+Issue #9 と #11 は環境依存の runtime 判定を修正し、production helper、patch、Dockerfile、upstream ABI を変更しません。
 namespace ごとの独立した rtnetlink snapshot から名前、index、MTU を取得し、default interface も全件検査します。
-interface snapshot に含まれず、型が通常ファイルの `bonding_masters` 属性だけを、登録済みの両 alias で任意項目とします。
+要求元 Network での新規 mount には `check_fresh_network()` を使い、native `class/net` と FUSE `devices/virtual/net` の両方を検査します。
+thread と checkpoint／lifecycle の observer はこの契約を維持します。
+継承 sysfs の native class view は mount 時の Network に結び付くため、interleave の親と両方の子、および dentry の absent-interface 検査には `check_fuse_network()` を使い、要求ごとの virtual-net だけを検査します。
+write-policy も nobody 所有、open 拒否、MTU 読み取りをこの保護された FUSE subtree だけに適用します。
+interface snapshot に含まれず、型が通常ファイルの `bonding_masters` 属性だけを、各検査対象 view で任意項目とします。
 仮想 interface の fixture は raw／高水準の全件集合、巻き戻しと cookie の規則、負の lookup、metadata、保護の検査を維持します。
 write-policy は有限範囲の map を持つ User 内に別 identity の Network を新設し、書き込み用 open 前に `NS_GET_USERNS` の所有関係を証明します。
 loopback が唯一の interface である必要はありません。
 [移植可能な検査の command と契約](../tests/runtime/README.md#移植可能な-sysfs-検査)を参照してください。
 
-過去の補正 oracle による Talos の成功は、継承した診断証跡です。
-変更なしの公式テストの成功や、この checkout での再実行とは扱いません。
+変更なしの公式 downstream v0.4.1 suite は元の proc／bwrap／保護検査と新規 sysfs の8ケースに成功した後、interleave で FAILED となりました。
+後続の write-policy、stress、helper rejection／lifecycle、補助検査は UNRUN です。
+別の最小診断では、現在の Network に一致する FUSE view と、異なる継承 native view を確認しています。
+これは継承した診断証跡であり、公式 suite の成功や、この checkout での再実行とは扱いません。
+write-policy と dentry の対象修正はソース調査によるもので、実行時の失敗を主張するものではありません。
 権限不要の模擬 fixture、parser、command 構築の検査は、ローカルの回帰証跡です。
 構成済みの使い捨て fixture がなければ実 Sysbox/helper runtime は UNRUN とし、outer 保護と failure helper の検査にはそれぞれの追加 fixture も必要です。
 これは fixture の前提不足であり、kernel／hardware を理由とした免除や新たな対応環境の主張ではありません。

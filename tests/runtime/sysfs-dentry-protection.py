@@ -10,7 +10,7 @@ import errno
 import os
 from pathlib import Path
 import signal
-from sysfs_oracle import check_network
+from sysfs_oracle import check_fuse_network
 import subprocess
 import tempfile
 
@@ -48,7 +48,7 @@ def attack(phase):
             else:
                 assert libc.unshare(0x40000000) == 0, ctypes.get_errno()
                 subprocess.run(['ip', 'link', 'set', 'lo', 'name', 'issue5-hidden'], check=True, timeout=5)
-                snapshot = check_network('/sys', absent=())
+                snapshot = check_fuse_network('/sys', absent=())
                 assert 'issue5-hidden' in snapshot and 'lo' not in snapshot, 'renamed loopback'
                 # Protection traversal may retain policy metadata for lo; the
                 # original absence/enumeration checks below remain authoritative.

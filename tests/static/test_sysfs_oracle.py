@@ -74,8 +74,24 @@ class Tree(unittest.TestCase):
             for view in oracle.VIEWS:
                 (self.base / view / 'bonding_masters').write_text('')
 
+    def inherited_native(self, snapshot=None):
+        # Independent backing, not aliases into the current virtual-net fixture.
+        native = self.base / 'mount-network'
+        native.mkdir()
+        view = self.base / 'class/net'
+        shutil.rmtree(view)
+        view.mkdir()
+        snapshot = snapshot if snapshot is not None else {'lo': (91, 9000), 'mount-only': (92, 1400)}
+        for name, (index, mtu) in snapshot.items():
+            entry = native / name
+            entry.mkdir()
+            (entry / 'ifindex').write_text(str(index))
+            (entry / 'mtu').write_text(str(mtu))
+            (entry / 'subsystem').symlink_to(view)
+            (view / name).symlink_to(entry)
+
     def check(self):
-        return oracle.check_network(self.base, observer=lambda: self.snapshot)
+        return oracle.check_fresh_network(self.base, observer=lambda: self.snapshot)
 
     def test_layouts_defaults_optional_attribute(self):
         for snapshot in ({'lo': (1, 65536)}, self.snapshot,
@@ -161,12 +177,12 @@ class Tree(unittest.TestCase):
     def test_observer_failure_and_stale_snapshot(self):
         for error in (OSError(errno.EIO, 'netlink'), TimeoutError('netlink')):
             with self.assertRaises(type(error)):
-                oracle.check_network(self.base, observer=Mock(side_effect=error))
+                oracle.check_fresh_network(self.base, observer=Mock(side_effect=error))
         with self.assertRaises(AssertionError):
-            oracle.check_network(self.base, observer=lambda: {})
+            oracle.check_fresh_network(self.base, observer=lambda: {})
         stale = dict(self.snapshot, tunl0=(9, 1481))
         with self.assertRaises(AssertionError):
-            oracle.check_network(self.base, observer=lambda: stale)
+            oracle.check_fresh_network(self.base, observer=lambda: stale)
 
     def test_raw_full_list_and_types(self):
         path = self.base / 'devices/virtual/net'
@@ -274,11 +290,12 @@ class Tree(unittest.TestCase):
     def test_interleave_caller_checks_defaults_controlled_and_stale_metadata(self):
         tree = ast.parse((RUNTIME / 'sysfs-interleave.py').read_text())
         function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'check')
-        scope = {'check_network': oracle.check_network, 'path': self.base / 'devices/virtual/net'}
+        self.inherited_native()
+        scope = {'path': self.base / 'devices/virtual/net'}
         exec(compile(ast.Module(body=[function], type_ignores=[]), '<interleave check>', 'exec'), scope)
-        def check_network(base, **kwargs):
-            return oracle.check_network(base, observer=lambda: self.snapshot, **kwargs)
-        scope['check_network'] = check_network
+        def check_fuse_network(base, **kwargs):
+            return oracle.check_fuse_network(base, observer=lambda: self.snapshot, **kwargs)
+        scope['check_fuse_network'] = check_fuse_network
         scope['check']('lo', 65536, {'foreign'}, dict(self.snapshot))
         with self.assertRaises(AssertionError):
             scope['check']('lo', 1202, {'foreign'}, dict(self.snapshot))
@@ -292,10 +309,24 @@ class Tree(unittest.TestCase):
         self.assertEqual([ast.dump(arg) for arg in calls[0].args],
                          [ast.dump(ast.Name(id=name, ctx=ast.Load()))
                           for name in ('shared', 'path', 'expected')])
+        # Execute the actual parent priming and repeated-parent oracle calls too.
+        for statement in tree.body:
+            if isinstance(statement, ast.FunctionDef):
+                continue
+            for call in ast.walk(statement):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                        and call.func.id in ('check_fuse_network', 'check_fresh_network')):
+                    result = eval(compile(ast.Expression(call), '<parent oracle>', 'eval'), scope)
+                    self.assertEqual(result, self.snapshot)
+        target = self.base / oracle.FUSE_VIEW / 'tunl0/mtu'
+        target.write_text('999')
+        with self.assertRaises(AssertionError):
+            scope['check']('lo', 65536, {'foreign'}, dict(self.snapshot))
 
     def test_dentry_absent_phase_reaches_shared_oracle(self):
         self.snapshot = {'issue5-hidden': (1, 65536), 'tunl0': (7, 1480)}
         self.build(self.snapshot, attr=True)
+        self.inherited_native()
         source = (RUNTIME / 'sysfs-dentry-protection.py').read_text()
         tree = ast.parse(source)
         attack = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'attack')
@@ -305,10 +336,10 @@ class Tree(unittest.TestCase):
                                   waitpid=lambda *_: (0, 0), waitstatus_to_exitcode=lambda _: 0)
         def observe(base, **kwargs):
             self.assertEqual(base, '/sys')
-            return oracle.check_network(self.base, observer=lambda: self.snapshot, **kwargs)
+            return oracle.check_fuse_network(self.base, observer=lambda: self.snapshot, **kwargs)
         observer = Mock(side_effect=observe)
         scope = dict(os=fake_os, libc=Mock(unshare=Mock(return_value=0)),
-                     subprocess=Mock(), check_network=observer, base='/sys/devices/virtual/net',
+                     subprocess=Mock(), check_fuse_network=observer, base='/sys/devices/virtual/net',
                      errno=errno, ctypes=Mock())
         exec(compile(ast.Module(body=[attack], type_ignores=[]), '<dentry attack>', 'exec'), scope)
         scope['attack']('absent-interface')
@@ -317,34 +348,104 @@ class Tree(unittest.TestCase):
         fake_os.listdir.assert_called_once_with('/sys/devices/virtual/net/lo')
         self.assertIn('check(paths, identities, mount_ids)', source)
         self.assertIn("paths = protected + [target + path[4:] for path in protected]", source)
+        fake_os._exit.reset_mock()
+        (self.base / oracle.FUSE_VIEW / 'issue5-hidden/mtu').write_text('999')
+        with patch('builtins.print'):
+            scope['attack']('absent-interface')
+        fake_os._exit.assert_called_once_with(1)
 
-    def test_write_policy_defaults_and_both_views(self):
+    def test_fresh_wrapper_and_network_entrypoint_reject_inherited_native(self):
+        network = load('sysfs-network')
+        with patch.object(network.sys, 'argv', ['sysfs-network.py', str(self.base)]), \
+             patch.object(network, 'check_fresh_network', side_effect=lambda base:
+                          oracle.check_fresh_network(base, observer=lambda: self.snapshot)):
+            network.main()
+            self.inherited_native()
+            with self.assertRaises(AssertionError):
+                network.main()
+        with self.assertRaises(AssertionError):
+            self.check()
+        self.assertEqual(oracle.check_fuse_network(self.base, observer=lambda: self.snapshot), self.snapshot)
+        # Matching names still cannot hide wrong native metadata in a fresh mount.
+        shutil.rmtree(self.base / 'mount-network')
+        self.inherited_native(self.snapshot)
+        for attribute in ('ifindex', 'mtu'):
+            target = self.base / 'mount-network/lo' / attribute
+            before = target.read_text()
+            target.write_text('999')
+            with self.assertRaises(AssertionError):
+                self.check()
+            target.write_text(before)
+
+    def test_fuse_contract_rejects_names_metadata_types_attributes_and_observer_errors(self):
+        self.inherited_native()
+        def check():
+            return oracle.check_fuse_network(self.base, observer=lambda: self.snapshot)
+        path = self.base / oracle.FUSE_VIEW
+        for attribute in ('ifindex', 'mtu'):
+            target = path / 'tunl0' / attribute
+            before = target.read_text()
+            target.write_text('999')
+            with self.assertRaises(AssertionError):
+                check()
+            target.unlink()
+            target.symlink_to(path / 'lo' / attribute)
+            with self.assertRaises(AssertionError):
+                check()
+            target.unlink()
+            target.write_text(before)
+        for name in ('foreign', 'bonding_masters'):
+            target = path / name
+            target.mkdir()
+            with self.assertRaises(AssertionError):
+                check()
+            target.rmdir()
+        shutil.rmtree(path / 'tunl0')
+        (path / 'tunl0').symlink_to(self.base / 'mount-network/lo')
+        with self.assertRaises(AssertionError):
+            check()
+        for observer in (lambda: {}, Mock(side_effect=OSError(errno.EIO, 'observer'))):
+            with self.assertRaises((AssertionError, OSError)):
+                oracle.check_fuse_network(self.base, observer=observer)
+
+    def test_write_policy_only_protected_fuse_with_unrelated_native(self):
+        self.inherited_native()
+        target = self.base / oracle.FUSE_VIEW / 'lo/mtu'
+        native = self.base / 'class/net/lo/mtu'
+        self.assertEqual(native.read_text(), '9000')
         denied = Mock(side_effect=OSError(errno.EACCES, 'denied'))
         actual_stat = Path.stat
+        stats = []
         def nobody(path, *args, **kwargs):
             attrs = actual_stat(path, *args, **kwargs)
-            return os.stat_result((*attrs[:4], 65534, 65534, *attrs[6:]))
+            if path == target:
+                stats.append(path)
+                return os.stat_result((*attrs[:4], 65534, 65534, *attrs[6:]))
+            # Native ownership is deliberately different and outside this policy.
+            return os.stat_result((*attrs[:4], 1, 1, *attrs[6:]))
         with patch.object(Path, 'stat', nobody):
             policy.check_policy(self.base, lambda: self.snapshot, denied)
-        self.assertEqual(denied.call_count, 6)
-        self.assertEqual({Path(call.args[0]) for call in denied.call_args_list},
-                         {self.base / view / 'lo/mtu' for view in oracle.VIEWS})
-        for view in oracle.VIEWS:
-            target = self.base / view / 'lo/mtu'
-            def wrong_owner(path, *args, **kwargs):
-                attrs = nobody(path, *args, **kwargs)
-                return os.stat_result((*attrs[:4], 1, 1, *attrs[6:])) if path == target else attrs
-            with patch.object(Path, 'stat', wrong_owner), self.assertRaises(AssertionError):
-                policy.check_policy(self.base, lambda: self.snapshot, denied)
-            def writable(path, flags):
-                if path == target:
-                    return os.open(os.devnull, os.O_WRONLY)
-                raise OSError(errno.EROFS, 'denied')
-            with patch.object(Path, 'stat', nobody), self.assertRaises(AssertionError):
-                policy.check_policy(self.base, lambda: self.snapshot, writable)
+        self.assertEqual(stats, [target] * 3)
+        self.assertEqual([(call.args[0], call.args[1]) for call in denied.call_args_list],
+                         [(target, flags) for flags in
+                          (os.O_WRONLY, os.O_RDWR, os.O_WRONLY | os.O_TRUNC)])
+        self.assertTrue(all(call.args[0] != native for call in denied.call_args_list))
+        def wrong_owner(path, *args, **kwargs):
+            attrs = nobody(path, *args, **kwargs)
+            return os.stat_result((*attrs[:4], 1, 1, *attrs[6:]))
+        with patch.object(Path, 'stat', wrong_owner), self.assertRaises(AssertionError):
+            policy.check_policy(self.base, lambda: self.snapshot, denied)
+        def writable(path, flags):
+            self.assertEqual(path, target)
+            return os.open(os.devnull, os.O_WRONLY)
+        with patch.object(Path, 'stat', nobody), self.assertRaises(AssertionError):
+            policy.check_policy(self.base, lambda: self.snapshot, writable)
         with patch.object(Path, 'stat', nobody):
-            def mutate(*_):
-                (self.base / 'devices/virtual/net/lo/mtu').write_text('1')
+            with self.assertRaises(AssertionError):
+                policy.check_policy(self.base, Mock(side_effect=[self.snapshot, {'lo': (1, 1)}]), denied)
+            def mutate(path, flags):
+                self.assertEqual(path, target)
+                target.write_text('1')
                 raise OSError(errno.EROFS, 'denied')
             with self.assertRaises(AssertionError):
                 policy.check_policy(self.base, lambda: self.snapshot, mutate)

@@ -5,14 +5,15 @@ Run once as registered outer root and once as capable direct-child root.
 import errno
 import os
 from pathlib import Path
-from sysfs_oracle import VIEWS, create_owned_network, netlink_snapshot
+from sysfs_oracle import FUSE_VIEW, create_owned_network, netlink_snapshot
 
 
 def check_policy(base=Path('/sys'), observer=netlink_snapshot, opener=os.open):
     snapshot = observer()
     assert 'lo' in snapshot, 'private loopback required'
     before = snapshot['lo'][1]
-    paths = [Path(base) / view / 'lo/mtu' for view in VIEWS]
+    # The inherited native class view belongs to the mount Network.
+    paths = [Path(base) / FUSE_VIEW / 'lo/mtu']
     for path in paths:
         assert int(path.read_text()) == before, ('initial MTU', path)
         for _ in range(3):
